@@ -12,7 +12,8 @@ spring:
     config:
       server:
         native:
-          search-locations: file:/config-repo
+          # 공통(application.yml) + 제품별 폴더. 서비스는 이름(spring.cloud.config.name)으로 자기 파일을 찾는다.
+          search-locations: file:/config-repo,file:/config-repo/messenger,file:/config-repo/commerce
 
   # spring-cloud-starter-bus-amqp 가 RabbitMQ 헬스 인디케이터를 자동 구성한다.
   # 호스트를 지정하지 않으면 localhost:5672 를 재시도하다가 기동이 수 분 지연되고

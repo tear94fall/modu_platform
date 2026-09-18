@@ -1,9 +1,9 @@
-# 전 서비스가 공유하는 인프라 설정.
-# 시크릿은 config-service 가 {cipher} 를 복호화해 평문으로 내려주므로
-# 클라이언트에는 별도 설정이 필요 없다. 복호화 키는 backend/.env 의 ENCRYPT_KEY 다.
+# 모든 제품(메신저·커머스)의 서비스가 공유하는 설정. 제품 전용 설정은 messenger/, commerce/ 에 둔다.
+# 시크릿은 config-service 가 {cipher} 를 복호화해 평문으로 내려주므로 클라이언트에는 별도 설정이 필요 없다.
+# 복호화 키는 modu_platform/.env 의 ENCRYPT_KEY 다.
 # 서비스 간(Feign) 호출 식별 토큰. /api-internal/** 은 이 값이 X-Internal-Token 헤더로
-# 와야만 통과한다. 플레이스홀더는 각 서비스 컨테이너의 환경변수로 풀린다 — prod 에서는
-# backend/.env 의 INTERNAL_API_TOKEN 에 강한 값을 넣어야 한다.
+# 와야만 통과한다. 플레이스홀더는 각 서비스 컨테이너의 환경변수로 풀린다 — 세 저장소(platform, messenger,
+# commerce)의 .env 에 같은 INTERNAL_API_TOKEN 이 있어야 하고, prod 에서는 강한 값을 넣어야 한다.
 modu:
   internal-api:
     token: ${INTERNAL_API_TOKEN:modu-internal-dev-token}
@@ -41,32 +41,3 @@ eureka:
   client:
     service-url:
       defaultZone: http://discovery-service:8761/eureka/
-
-spring:
-  kafka:
-    producer:
-      bootstrap-servers: kafka:9092
-    consumer:
-      bootstrap-servers: kafka:9092
-  data:
-    redis:
-      cluster:
-        nodes:
-          - redis-node-1:6379
-          - redis-node-2:6379
-          - redis-node-3:6379
-          - redis-node-4:6379
-          - redis-node-5:6379
-          - redis-node-6:6379
-      lettuce:
-        cluster:
-          refresh:
-            adaptive: true
-            period: 30s
-  rabbitmq:
-    host: rabbitmq
-    username: '{cipher}fca9392645c442339c1e59f85f7ba40b9ead2aead8892da8e67e87ef7a0be65d'
-    password: '{cipher}fca9392645c442339c1e59f85f7ba40b9ead2aead8892da8e67e87ef7a0be65d'
-
-  datasource:
-    password: '{cipher}fd96316c87e3190bbdaee42f9ec494ceaae3ea5f13d07d66b680933106f77eb8'

@@ -1,0 +1,87 @@
+name: modu-platform
+
+# modu 프로젝트 공용 플랫폼: 설정 서버, 서비스 레지스트리, API 게이트웨이.
+# 기동 순서: modu_infra(네트워크·데이터·관측성) → 이 스택 → modu_messenger backend / modu_commerce backend.
+# 다른 저장소의 서비스는 external 네트워크 modu-infra 에서 컨테이너 이름(config-service, discovery-service, gateway-service)으로 붙는다.
+
+services:
+  config-service:
+    build:
+      context: ./config-service
+      dockerfile: ./Dockerfile
+    container_name: config-service
+    ports:
+      - 8888:8888
+    environment:
+      - ENCRYPT_KEY=${ENCRYPT_KEY:?.env 에 ENCRYPT_KEY 를 설정하세요}
+      - RABBITMQ_HOST=rabbitmq
+      - JAVA_TOOL_OPTIONS=${CONFIG_AGENT_OPTS:-}
+    volumes:
+      - ./config-repo:/config-repo:ro
+      - pinpoint-agent:/pinpoint-agent:ro
+    networks:
+      - modu-infra
+      - pinpoint
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8888/actuator/health | grep -q UP || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+      start_period: 20s
+    restart: always
+
+  discovery-service:
+    build:
+      context: ./discovery-service
+      dockerfile: ./Dockerfile
+    container_name: discovery-service
+    ports:
+      - 8761:8761
+    environment:
+      - CONFIG_SERVER_URI=http://config-service:8888
+      - JAVA_TOOL_OPTIONS=${DISCOVERY_AGENT_OPTS:-}
+    volumes:
+      - pinpoint-agent:/pinpoint-agent:ro
+    depends_on:
+      config-service:
+        condition: service_healthy
+    networks:
+      - modu-infra
+      - pinpoint
+    restart: always
+
+  gateway-service:
+    build:
+      context: ./gateway-service
+      dockerfile: ./Dockerfile
+    container_name: gateway-service
+    ports:
+      - 8000:8000
+    environment:
+      - CONFIG_SERVER_URI=http://config-service:8888
+      - JAVA_TOOL_OPTIONS=${GATEWAY_AGENT_OPTS:-}
+      - ADMIN_ALLOWED_ORIGIN=${ADMIN_ALLOWED_ORIGIN:-http://localhost:5173}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?.env 에 INTERNAL_API_TOKEN 을 설정하세요}
+    depends_on:
+      config-service:
+        condition: service_healthy
+      discovery-service:
+        condition: service_started
+    volumes:
+      - pinpoint-agent:/pinpoint-agent:ro
+    networks:
+      - modu-infra
+      - pinpoint
+    restart: always
+
+networks:
+  modu-infra:
+    external: true
+  pinpoint:
+    external: true
+    name: pinpoint-docker_pinpoint
+
+volumes:
+  pinpoint-agent:
+    external: true
+    name: pinpoint-docker_data-volume
