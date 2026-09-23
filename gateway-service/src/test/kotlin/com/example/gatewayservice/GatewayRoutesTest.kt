@@ -37,6 +37,7 @@ class GatewayRoutesTest {
     fun internalTier_hasNoRoute() {
         assertNull(firstMatch(HttpMethod.GET, "/chat-service/api-internal/chat/1"))
         assertNull(firstMatch(HttpMethod.GET, "/member-service/api-internal/member/id/u1"))
+        assertNull(firstMatch(HttpMethod.POST, "/point-service/api-internal/point/earn"))
     }
 
     @Test
@@ -48,6 +49,7 @@ class GatewayRoutesTest {
     fun publicTier_routesToService() {
         assertEquals("chat-service-public", routeId(HttpMethod.GET, "/chat-service/api-public/chat/1/rooms"))
         assertEquals("push-service-public", routeId(HttpMethod.PUT, "/push-service/api-public/push/u1/token"))
+        assertEquals("point-service-public", routeId(HttpMethod.POST, "/point-service/api-public/point/me/checkin"))
     }
 
     @Test
@@ -86,6 +88,7 @@ class GatewayRoutesTest {
     @Test
     fun adminTier_routesToAdminRoute() {
         assertEquals("member-service-admin", routeId(HttpMethod.GET, "/member-service/api-admin/member"))
+        assertEquals("point-service-admin", routeId(HttpMethod.GET, "/point-service/api-admin/point/rules"))
         assertEquals("chat-service-admin", routeId(HttpMethod.GET, "/chat-service/api-admin/chat/rooms"))
         assertEquals("push-service-admin", routeId(HttpMethod.POST, "/push-service/api-admin/push/broadcast"))
         assertEquals("storage-service-admin", routeId(HttpMethod.GET, "/storage-service/api-admin/view/x.jpg"))

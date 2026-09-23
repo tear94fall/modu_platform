@@ -92,6 +92,13 @@ spring:
           filters:
             - AuthorizationHeaderFilter=ROLE_USER,modu-chat
             - RewritePath=/push-service/(?<segment>.*), /$\{segment}
+        - id: point-service-public
+          uri: lb://POINT-SERVICE
+          predicates:
+            - Path=/point-service/api-public/**
+          filters:
+            - AuthorizationHeaderFilter=ROLE_USER,modu-chat
+            - RewritePath=/point-service/(?<segment>.*), /$\{segment}
 
         # ---- admin 계층. ROLE_ADMIN JWT 를 검사하고, 통과한 요청에만 내부 토큰을 붙여 넘긴다 ----
         - id: member-service-admin
@@ -127,6 +134,15 @@ spring:
             - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
             - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
             - RewritePath=/storage-service/(?<segment>.*), /$\{segment}
+
+        - id: point-service-admin
+          uri: lb://POINT-SERVICE
+          predicates:
+            - Path=/point-service/api-admin/**
+          filters:
+            - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
+            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+            - RewritePath=/point-service/(?<segment>.*), /$\{segment}
 
         # commerce-service 는 Eureka 에 등록하지 않는 별도 저장소(modu_commerce) 서비스라 컨테이너 이름으로 간다.
         # 내부 토큰 대신 commerce 가 Authorization 헤더의 JWT(aud=modu-admin, ROLE_ADMIN)를 다시 검증한다.
