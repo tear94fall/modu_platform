@@ -1,0 +1,6 @@
+# 테스트는 설정 서버 없이 뜬다. main 의 fail-fast 때문에 여기서 config 클라이언트를 끈다.
+# classpath:/config/application.yml 은 main 의 application.yml 을 가리지 않고 그 위에 덧붙는다.
+spring:
+  cloud:
+    config:
+      enabled: false
