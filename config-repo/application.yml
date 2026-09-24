@@ -22,3 +22,13 @@ eureka:
   client:
     service-url:
       defaultZone: http://discovery-service:8761/eureka/
+
+# Eureka 에 등록할 주소 고르기. 서비스 컨테이너는 modu-infra 말고도 redis-cluster(10.90.0.0/24, auth·member)와
+# pinpoint(172.30.0.0/24) 네트워크에 붙어 있고, 컨테이너가 재시작될 때 인터페이스 순서가 바뀐다.
+# 게이트웨이는 modu-infra 로만 닿으므로 10.90.x 가 등록되면 그 서비스는 게이트웨이에서 503 이 된다(2026-09-24 auth·member).
+# modu-infra 서브넷은 docker 가 자동으로 정해 고정값을 쓸 수 없으니, 서브넷이 고정된 두 네트워크를 빼는 정규식으로 고른다.
+spring:
+  cloud:
+    inetutils:
+      preferred-networks:
+        - '^(?!10\.90\.|172\.30\.).*$'
