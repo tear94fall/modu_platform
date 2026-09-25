@@ -17,7 +17,7 @@ import reactor.core.publisher.Mono
 /**
  * 게이트웨이 자신의 관리 API. 라우트가 아니라 게이트웨이 앱의 컨트롤러라서, 다른 서비스처럼
  * `/<서비스>/api-admin/...` 모양으로 둔다. 컨트롤러가 라우트보다 먼저 매칭되고, 이 경로를 잡는 라우트도 없다.
- * 라우트의 `AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin` 과 같은 규칙으로 막는다(보안 체인은 여전히 permitAll).
+ * 모두 시스템 콘솔용이라 라우트의 `AuthorizationHeaderFilter=ROLE_SYSTEM,modu-admin` 과 같은 규칙으로 막는다(보안 체인은 여전히 permitAll).
  */
 @RestController
 @RequestMapping("/gateway-service/api-admin")
@@ -33,7 +33,7 @@ class GatewayConfigController(
     fun config(
         @RequestHeader(HttpHeaders.AUTHORIZATION, required = false) authorization: String?,
     ): Mono<ResponseEntity<GatewayConfigResponse>> =
-        JwtAccess.verify(jwtDecoder, authorization, ADMIN_ROLE, ADMIN_AUDIENCE)
+        JwtAccess.verify(jwtDecoder, authorization, SYSTEM_ROLE, CONSOLE_AUDIENCE)
             .map { ResponseEntity.ok(GatewayConfigView.of(gatewayProperties, globalCorsProperties)) }
             .onErrorResume(JwtAccess.Denied::class.java) { e ->
                 log.warn("gateway config denied: {}", e.message)
@@ -41,7 +41,8 @@ class GatewayConfigController(
             }
 
     companion object {
-        const val ADMIN_ROLE = "ROLE_ADMIN"
-        const val ADMIN_AUDIENCE = "modu-admin"
+        /** 직원 권한 SYSTEM(또는 SUPER)이 있는 토큰. */
+        const val SYSTEM_ROLE = "ROLE_SYSTEM"
+        const val CONSOLE_AUDIENCE = "modu-admin"
     }
 }

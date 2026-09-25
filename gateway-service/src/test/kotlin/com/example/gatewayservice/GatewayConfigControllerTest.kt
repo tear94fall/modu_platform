@@ -16,7 +16,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.springframework.test.web.reactive.server.WebTestClient
 import reactor.core.publisher.Mono
 
-/** 게이트웨이 설정 조회: 관리자 토큰(ROLE_ADMIN, aud=modu-admin)만 통과하고, 라우트·기본 필터·CORS 를 설정 그대로 보여 준다. */
+/** 게이트웨이 설정 조회: 시스템 권한 토큰(ROLE_SYSTEM, aud=modu-admin)만 통과하고, 라우트·기본 필터·CORS 를 설정 그대로 보여 준다. */
 @SpringBootTest(
     properties = [
         "modu.internal-api.token=test-internal-token",
@@ -36,9 +36,10 @@ class GatewayConfigControllerTest {
 
     @BeforeEach
     fun tokens() {
-        Mockito.`when`(decoder.decode("admin")).thenReturn(Mono.just(jwt("modu-admin", "ROLE_ADMIN")))
+        Mockito.`when`(decoder.decode("system")).thenReturn(Mono.just(jwt("modu-admin", "ROLE_SYSTEM")))
+        Mockito.`when`(decoder.decode("admin-only")).thenReturn(Mono.just(jwt("modu-admin", "ROLE_ADMIN", "ROLE_INTERNAL")))
         Mockito.`when`(decoder.decode("chat-user")).thenReturn(Mono.just(jwt("modu-chat", "ROLE_USER")))
-        Mockito.`when`(decoder.decode("admin-wrong-aud")).thenReturn(Mono.just(jwt("modu-chat", "ROLE_ADMIN")))
+        Mockito.`when`(decoder.decode("admin-wrong-aud")).thenReturn(Mono.just(jwt("modu-chat", "ROLE_SYSTEM")))
         Mockito.`when`(decoder.decode("broken")).thenReturn(Mono.error(BadJwtException("bad signature")))
     }
 
@@ -53,11 +54,13 @@ class GatewayConfigControllerTest {
         get("broken").expectStatus().isUnauthorized
         get("admin-wrong-aud").expectStatus().isUnauthorized
         get("chat-user").expectStatus().isUnauthorized
+        // 어드민·인터널 권한만 있는 직원은 시스템 설정을 못 본다.
+        get("admin-only").expectStatus().isUnauthorized
     }
 
     @Test
     fun adminSeesRoutesInOrderWithAccessDefaultFiltersAndCors() {
-        get("admin").expectStatus().isOk.expectBody()
+        get("system").expectStatus().isOk.expectBody()
             .jsonPath("$.routes[0].id").isEqualTo("auth-service-oauth2")
             .jsonPath("$.routes[0].uri").isEqualTo("lb://AUTH-SERVICE")
             .jsonPath("$.routes[0].access.type").isEqualTo("PUBLIC")
@@ -72,7 +75,9 @@ class GatewayConfigControllerTest {
             .jsonPath("$.routes[?(@.id == 'point-service-admin')].access.role").isEqualTo("ROLE_ADMIN")
             .jsonPath("$.routes[?(@.id == 'point-service-admin')].access.audience").isEqualTo("modu-admin")
             .jsonPath("$.routes[?(@.id == 'chat-service-public')].access.audience").isEqualTo("modu-chat")
-            .jsonPath("$.routes[?(@.id == 'config-service-admin')].access.role").isEqualTo("ROLE_ADMIN")
+            .jsonPath("$.routes[?(@.id == 'config-service-admin')].access.role").isEqualTo("ROLE_SYSTEM")
+            .jsonPath("$.routes[?(@.id == 'member-service-super')].access.role").isEqualTo("ROLE_SUPER")
+            .jsonPath("$.routes[?(@.id == 'member-service-staff')].access.role").isEqualTo("ROLE_INTERNAL")
             .jsonPath("$.routes[?(@.id == 'config-service-admin')].filters[?(@.name == 'AddRequestHeader')].args[1]").isEqualTo("******")
             // 서비스 간 토큰 값은 절대 내보내지 않는다(설정값은 test-internal-token).
             .jsonPath("$.routes[?(@.id == 'point-service-admin')].filters[?(@.name == 'AddRequestHeader')].args[0]").isEqualTo("X-Internal-Token")
@@ -86,7 +91,7 @@ class GatewayConfigControllerTest {
 
     @Test
     fun responseNeverContainsTheInternalToken() {
-        val body = get("admin").expectStatus().isOk.expectBody(String::class.java).returnResult().responseBody.orEmpty()
+        val body = get("system").expectStatus().isOk.expectBody(String::class.java).returnResult().responseBody.orEmpty()
         assertEquals(false, body.contains("test-internal-token"))
     }
 
