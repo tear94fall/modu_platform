@@ -95,6 +95,14 @@ class GatewayRoutesTest {
     }
 
     @Test
+    fun staffConsole_routesSplitByTier() {
+        assertEquals("member-service-staff", routeId(HttpMethod.GET, "/member-service/api-staff/member"))
+        assertEquals("member-service-staff", routeId(HttpMethod.GET, "/member-service/api-staff/member/3"))
+        assertEquals("member-service-super", routeId(HttpMethod.PUT, "/member-service/api-super/staff/3"))
+        assertEquals("member-service-super", routeId(HttpMethod.GET, "/member-service/api-super/staff"))
+    }
+
+    @Test
     fun configAdmin_routesOnlyAdminPathsToConfigServer() {
         val route = firstMatch(HttpMethod.GET, "/config-service/api-admin/config-repo/files")!!
         assertEquals("config-service-admin", route.id)

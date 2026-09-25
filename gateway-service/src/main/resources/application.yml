@@ -149,14 +149,34 @@ spring:
             - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
             - RewritePath=/point-service/(?<segment>.*), /$\{segment}
 
+        # ---- 직원 콘솔(모두 인터널) 계층. 회원 조회는 인터널 권한, 직원 지정·권한 변경은 최상위 관리자만 ----
+        # 두 계층은 첫 경로 조각부터 다르다(api-staff / api-super). 한 계층 안에 좁은 경로를 두면
+        # 톰캣이 // 를 합치는 탓에 /api-staff//staff 가 넓은 라우트를 지나 좁은 경로에 닿을 수 있다.
+        - id: member-service-super
+          uri: lb://MEMBER-SERVICE
+          predicates:
+            - Path=/member-service/api-super/**
+          filters:
+            - AuthorizationHeaderFilter=ROLE_SUPER,modu-admin
+            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+            - RewritePath=/member-service/(?<segment>.*), /$\{segment}
+        - id: member-service-staff
+          uri: lb://MEMBER-SERVICE
+          predicates:
+            - Path=/member-service/api-staff/**
+          filters:
+            - AuthorizationHeaderFilter=ROLE_INTERNAL,modu-admin
+            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+            - RewritePath=/member-service/(?<segment>.*), /$\{segment}
+
         # config-service 는 Eureka 에 등록하지 않으므로 컨테이너 이름으로 간다(설정 서버 주소와 같다).
-        # 관리 콘솔(모두 시스템)의 config-repo 조회. 설정 서버는 JWT 를 모르므로 여기서 관리자 토큰을 보고 내부 토큰을 붙인다.
+        # 모두 시스템의 config-repo 조회. 설정 서버는 JWT 를 모르므로 여기서 시스템 권한(ROLE_SYSTEM)을 보고 내부 토큰을 붙인다.
         - id: config-service-admin
           uri: ${CONFIG_SERVER_URI:http://localhost:8888}
           predicates:
             - Path=/config-service/api-admin/**
           filters:
-            - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
+            - AuthorizationHeaderFilter=ROLE_SYSTEM,modu-admin
             - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
             - RewritePath=/config-service/(?<segment>.*), /$\{segment}
 
