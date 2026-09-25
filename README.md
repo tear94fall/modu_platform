@@ -4,7 +4,7 @@ modu 프로젝트(modu_messenger, modu_commerce, modu_admin)가 같이 쓰는 �
 
 | 서비스 | 포트 | 역할 |
 |---|---|---|
-| config-service | 8888 | Spring Cloud Config(native). `config-repo/` 를 서빙하고 `{cipher}` 값을 복호화한다. |
+| config-service | 8888 | Spring Cloud Config(native). `config-repo/` 를 서빙하고 `{cipher}` 값을 복호화한다. 관리 콘솔용 조회 `GET /api-admin/config-repo/files`, `/file?path=` 는 비밀값을 가려서 내려주고 게이트웨이(`/config-service/api-admin/**`, 관리자 토큰)로만 연다. |
 | discovery-service | 8761 | Eureka 서비스 레지스트리. 게이트웨이의 `lb://` 라우팅이 여기 등록 정보를 쓴다. |
 | gateway-service | 8000 | Spring Cloud Gateway. JWT 검증(auth-service JWKS), 서비스 라우팅, 백오피스 CORS. |
 

@@ -95,6 +95,15 @@ class GatewayRoutesTest {
     }
 
     @Test
+    fun configAdmin_routesOnlyAdminPathsToConfigServer() {
+        val route = firstMatch(HttpMethod.GET, "/config-service/api-admin/config-repo/files")!!
+        assertEquals("config-service-admin", route.id)
+        assertEquals(8888, route.uri.port)
+        // 설정 서버의 서비스용 경로(/{name}/{profile})는 게이트웨이로 열지 않는다.
+        assertNull(firstMatch(HttpMethod.GET, "/config-service/chat-service/default"))
+    }
+
+    @Test
     fun commerceAdmin_routesToCommerceServiceByContainerName() {
         val route = firstMatch(HttpMethod.POST, "/commerce-service/api-admin/v1/products")!!
         assertEquals("commerce-service-admin", route.id)

@@ -149,6 +149,17 @@ spring:
             - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
             - RewritePath=/point-service/(?<segment>.*), /$\{segment}
 
+        # config-service 는 Eureka 에 등록하지 않으므로 컨테이너 이름으로 간다(설정 서버 주소와 같다).
+        # 관리 콘솔(모두 시스템)의 config-repo 조회. 설정 서버는 JWT 를 모르므로 여기서 관리자 토큰을 보고 내부 토큰을 붙인다.
+        - id: config-service-admin
+          uri: ${CONFIG_SERVER_URI:http://localhost:8888}
+          predicates:
+            - Path=/config-service/api-admin/**
+          filters:
+            - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
+            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+            - RewritePath=/config-service/(?<segment>.*), /$\{segment}
+
         # commerce-service 는 Eureka 에 등록하지 않는 별도 저장소(modu_commerce) 서비스라 컨테이너 이름으로 간다.
         # 내부 토큰 대신 commerce 가 Authorization 헤더의 JWT(aud=modu-admin, ROLE_ADMIN)를 다시 검증한다.
         - id: commerce-service-admin

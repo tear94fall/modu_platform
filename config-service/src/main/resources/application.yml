@@ -23,6 +23,11 @@ spring:
     host: ${RABBITMQ_HOST:localhost}
     port: 5672
 
+# 관리 콘솔용 config-repo 조회(/api-admin/**)는 게이트웨이가 붙여 주는 이 토큰이 맞아야 연다. 비어 있으면 모두 거절한다.
+modu:
+  internal-api:
+    token: ${INTERNAL_API_TOKEN:}
+
 encrypt:
   # 빈 기본값을 두지 않는다. 키가 없으면 서버가 {cipher} 를 복호화하지 못한 채
   # 'invalid' 접두사가 붙은 쓰레기 값을 내려주고, 클라이언트는 기동 시점이 아니라
