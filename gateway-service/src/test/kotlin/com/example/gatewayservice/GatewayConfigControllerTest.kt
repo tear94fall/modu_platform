@@ -72,6 +72,8 @@ class GatewayConfigControllerTest {
             .jsonPath("$.routes[?(@.id == 'point-service-admin')].access.role").isEqualTo("ROLE_ADMIN")
             .jsonPath("$.routes[?(@.id == 'point-service-admin')].access.audience").isEqualTo("modu-admin")
             .jsonPath("$.routes[?(@.id == 'chat-service-public')].access.audience").isEqualTo("modu-chat")
+            .jsonPath("$.routes[?(@.id == 'config-service-admin')].access.role").isEqualTo("ROLE_ADMIN")
+            .jsonPath("$.routes[?(@.id == 'config-service-admin')].filters[?(@.name == 'AddRequestHeader')].args[1]").isEqualTo("******")
             // 서비스 간 토큰 값은 절대 내보내지 않는다(설정값은 test-internal-token).
             .jsonPath("$.routes[?(@.id == 'point-service-admin')].filters[?(@.name == 'AddRequestHeader')].args[0]").isEqualTo("X-Internal-Token")
             .jsonPath("$.routes[?(@.id == 'point-service-admin')].filters[?(@.name == 'AddRequestHeader')].args[1]").isEqualTo("******")
