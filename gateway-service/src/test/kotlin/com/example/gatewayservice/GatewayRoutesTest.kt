@@ -37,6 +37,7 @@ class GatewayRoutesTest {
     fun internalTier_hasNoRoute() {
         assertNull(firstMatch(HttpMethod.GET, "/chat-service/api-internal/chat/1"))
         assertNull(firstMatch(HttpMethod.GET, "/member-service/api-internal/member/id/u1"))
+        assertNull(firstMatch(HttpMethod.POST, "/point-service/api-internal/point/earn"))
     }
 
     @Test
@@ -48,6 +49,7 @@ class GatewayRoutesTest {
     fun publicTier_routesToService() {
         assertEquals("chat-service-public", routeId(HttpMethod.GET, "/chat-service/api-public/chat/1/rooms"))
         assertEquals("push-service-public", routeId(HttpMethod.PUT, "/push-service/api-public/push/u1/token"))
+        assertEquals("point-service-public", routeId(HttpMethod.POST, "/point-service/api-public/point/me/checkin"))
     }
 
     @Test
@@ -86,9 +88,27 @@ class GatewayRoutesTest {
     @Test
     fun adminTier_routesToAdminRoute() {
         assertEquals("member-service-admin", routeId(HttpMethod.GET, "/member-service/api-admin/member"))
+        assertEquals("point-service-admin", routeId(HttpMethod.GET, "/point-service/api-admin/point/rules"))
         assertEquals("chat-service-admin", routeId(HttpMethod.GET, "/chat-service/api-admin/chat/rooms"))
         assertEquals("push-service-admin", routeId(HttpMethod.POST, "/push-service/api-admin/push/broadcast"))
         assertEquals("storage-service-admin", routeId(HttpMethod.GET, "/storage-service/api-admin/view/x.jpg"))
+    }
+
+    @Test
+    fun staffConsole_routesSplitByTier() {
+        assertEquals("member-service-staff", routeId(HttpMethod.GET, "/member-service/api-staff/member"))
+        assertEquals("member-service-staff", routeId(HttpMethod.GET, "/member-service/api-staff/member/3"))
+        assertEquals("member-service-super", routeId(HttpMethod.PUT, "/member-service/api-super/staff/3"))
+        assertEquals("member-service-super", routeId(HttpMethod.GET, "/member-service/api-super/staff"))
+    }
+
+    @Test
+    fun configAdmin_routesOnlyAdminPathsToConfigServer() {
+        val route = firstMatch(HttpMethod.GET, "/config-service/api-admin/config-repo/files")!!
+        assertEquals("config-service-admin", route.id)
+        assertEquals(8888, route.uri.port)
+        // 설정 서버의 서비스용 경로(/{name}/{profile})는 게이트웨이로 열지 않는다.
+        assertNull(firstMatch(HttpMethod.GET, "/config-service/chat-service/default"))
     }
 
     @Test

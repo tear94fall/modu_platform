@@ -1,9 +1,6 @@
 # 메신저(modu_chat) 서비스 전용 설정. 각 서비스가 spring.cloud.config.name=messenger,<서비스 이름> 으로 받아 간다.
 # 커머스 서비스에는 내려가지 않는다(datasource 비밀번호 등이 섞이면 안 된다).
 modu:
-  admin:
-    # 백오피스 로그인(auth-service). bcrypt 해시. 비어 있으면 관리자 로그인이 항상 실패한다.
-    password-hash: ${ADMIN_PASSWORD_HASH:}
   oauth:
     # auth-service(발급자) 전용. 검증 쪽이 보는 issuer·jwks-uri·audiences 는 공통 application.yml 에 있다.
     access-token-ttl: 1h
@@ -20,9 +17,12 @@ modu:
       - id: modu-commerce
         grants: [google_id_token, sso_code, refresh_token]
         scopes: [openid, profile, commerce]
+      # 직원 콘솔(모두의 어드민·시스템·인터널). 직원의 구글 계정으로 로그인하고, roles 는 직원 권한에서 온다
+      # (member-service staff/staff_permission). SUPER → 모든 콘솔 role + ROLE_SUPER. 토큰을 갱신할 때마다 권한을 다시 읽는다.
       - id: modu-admin
-        grants: [admin_password, refresh_token]
+        grants: [google_id_token, refresh_token]
         scopes: [openid, admin]
+        staff: true
 
 
 spring:

@@ -1,11 +1,11 @@
 package com.example.gatewayservice.filter
 
+import com.example.gatewayservice.jwt.JwtAccess
 import org.slf4j.LoggerFactory
 import org.springframework.cloud.gateway.filter.GatewayFilter
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
-import org.springframework.security.oauth2.jwt.JwtException
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
 import org.springframework.stereotype.Component
 import org.springframework.web.server.ServerWebExchange
@@ -23,7 +23,6 @@ class AuthorizationHeaderFilter(
     companion object {
         const val USER_ID_HEADER = "X-Auth-User-Id"
         const val CLIENT_ID_HEADER = "X-Auth-Client-Id"
-        private const val BEARER = "Bearer "
     }
 
     private val log = LoggerFactory.getLogger(AuthorizationHeaderFilter::class.java)
@@ -34,19 +33,8 @@ class AuthorizationHeaderFilter(
     override fun apply(config: Config): GatewayFilter =
         GatewayFilter { exchange, chain ->
             val header = exchange.request.headers.getFirst(HttpHeaders.AUTHORIZATION)
-            if (header == null || !header.startsWith(BEARER)) {
-                return@GatewayFilter onError(exchange, "No authorization header", HttpStatus.UNAUTHORIZED)
-            }
-            jwtDecoder.decode(header.substring(BEARER.length))
+            JwtAccess.verify(jwtDecoder, header, config.role, config.audience)
                 .flatMap { jwt ->
-                    val requiredAudience = config.audience
-                    if (!requiredAudience.isNullOrBlank() && jwt.audience?.contains(requiredAudience) != true) {
-                        return@flatMap onError(exchange, "JWT audience mismatch: requires $requiredAudience", HttpStatus.UNAUTHORIZED)
-                    }
-                    val roles = jwt.getClaimAsStringList("roles")
-                    if (roles == null || !roles.contains(config.role)) {
-                        return@flatMap onError(exchange, "JWT role mismatch: requires ${config.role}", HttpStatus.UNAUTHORIZED)
-                    }
                     val userId = jwt.subject
                     val clientId = jwt.audience?.firstOrNull() ?: ""
                     val mutated = exchange.request.mutate().header(CLIENT_ID_HEADER, clientId)
@@ -55,8 +43,8 @@ class AuthorizationHeaderFilter(
                     }
                     chain.filter(exchange.mutate().request(mutated.build()).build())
                 }
-                .onErrorResume(JwtException::class.java) { e ->
-                    onError(exchange, "JWT token is not valid: ${e.message}", HttpStatus.UNAUTHORIZED)
+                .onErrorResume(JwtAccess.Denied::class.java) { e ->
+                    onError(exchange, e.message ?: "unauthorized", HttpStatus.UNAUTHORIZED)
                 }
         }
 
