@@ -11,3 +11,23 @@ spring:
       url: jdbc:mysql://mysql-commerce:3306/commerce?useSSL=false&characterEncoding=UTF-8&serverTimezone=Asia/Seoul&allowPublicKeyRetrieval=true
       username: root
       password: '{cipher}bf3b701e8f39e61eb21c19dbc480c16d856a748bec1682dff922509eeaa8b3a4'
+  # 기획전·이벤트 캐시(modu.cache). 메신저와 같은 Redis 클러스터를 쓰고, 키는 commerce: 로 시작한다.
+  data:
+    redis:
+      cluster:
+        nodes:
+          - redis-node-1:6379
+          - redis-node-2:6379
+          - redis-node-3:6379
+          - redis-node-4:6379
+          - redis-node-5:6379
+          - redis-node-6:6379
+      lettuce:
+        cluster:
+          refresh:
+            adaptive: true
+            period: 30s
+
+modu:
+  cache:
+    redis-enabled: true
