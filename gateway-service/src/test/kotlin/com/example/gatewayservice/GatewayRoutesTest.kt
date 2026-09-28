@@ -124,4 +124,12 @@ class GatewayRoutesTest {
         // 앱은 commerce-service(8200)를 직접 부른다. 게이트웨이에는 admin 계층만 연다.
         assertNull(firstMatch(HttpMethod.GET, "/commerce-service/api/v1/products"))
     }
+
+    @Test
+    fun gatewayOwnAdminApi_hasNoRoute() {
+        // 게이트웨이 자체 관리 API(GatewayConfigController, ApiDocsController)는 어떤 라우트에도 잡히지 않아야 컨트롤러가 받는다.
+        assertNull(firstMatch(HttpMethod.GET, "/gateway-service/api-admin/config"))
+        assertNull(firstMatch(HttpMethod.GET, "/gateway-service/api-admin/api-docs"))
+        assertNull(firstMatch(HttpMethod.GET, "/gateway-service/api-admin/api-docs/member-service"))
+    }
 }
