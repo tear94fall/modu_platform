@@ -103,19 +103,20 @@ class ApiDocsControllerTest {
     }
 
     @Test
-    fun targetsUseLbForEurekaServicesAndContainerAddressForCommerce() {
+    fun targetsUseLbForAllServicesIncludingCommerce() {
         val targets = context.getBean(ApiDocsService::class.java).targets().associate { it.name to it.baseUri.toString() }
         assertEquals("lb://member-service", targets["member-service"])
         assertEquals("lb://ws-service", targets["ws-service"]) // 라우트는 lb:ws://WS-SERVICE, 문서는 http
         assertEquals("lb://chat-store-service", targets["chat-store-service"])
         assertEquals("lb://schedule-service", targets["schedule-service"])
-        assertEquals("http://commerce-service:8200", targets["commerce-service"])
+        // commerce-service 는 extra-services 가 아니라 라우트(lb://COMMERCE-SERVICE)에서 잡힌다.
+        assertEquals("lb://commerce-service", targets["commerce-service"])
         assertEquals(false, targets.keys.any { it in setOf("gateway-service", "config-service", "discovery-service") })
     }
 
     @Test
-    fun docsOfExtraServicesAreFetchedFromTheirConfiguredUri() {
-        Mockito.`when`(fetcher.fetch("commerce-service", URI.create("http://commerce-service:8200")))
+    fun docsOfRouteAndExtraServicesAreFetchedThroughEureka() {
+        Mockito.`when`(fetcher.fetch("commerce-service", URI.create("lb://commerce-service")))
             .thenReturn(Mono.just(mapper.readTree("""{"openapi":"3.0.1","servers":[{"url":"http://commerce-service:8200"}]}""")))
         Mockito.`when`(fetcher.fetch("chat-store-service", URI.create("lb://chat-store-service")))
             .thenReturn(Mono.just(mapper.readTree("""{"openapi":"3.0.1"}""")))

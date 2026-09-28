@@ -18,7 +18,7 @@ fun interface ApiDocsFetcher {
 
 /**
  * `<baseUri>/v3/api-docs` 를 부른다. `lb://x` 는 로드밸런싱 WebClient 로 `http://x` 를 부르고(호스트 자리의 서비스 이름을
- * Eureka 인스턴스로 바꾼다), `http(s)://` 는 Eureka 에 없는 서비스(commerce-service)라 보통 WebClient 로 그대로 부른다.
+ * Eureka 인스턴스로 바꾼다), `http(s)://` 는 Eureka 에 없는 서비스라 보통 WebClient 로 그대로 부른다.
  */
 @Component
 class LoadBalancedApiDocsFetcher(

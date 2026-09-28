@@ -2,14 +2,22 @@ package com.example.gatewayservice
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.cloud.gateway.route.Route
 import org.springframework.cloud.gateway.route.RouteLocator
 import org.springframework.http.HttpMethod
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest
 import org.springframework.mock.web.server.MockServerWebExchange
+import org.springframework.security.oauth2.jwt.BadJwtException
+import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
+import org.springframework.test.context.bean.override.mockito.MockitoBean
+import org.springframework.test.web.reactive.server.WebTestClient
 import reactor.core.publisher.Mono
 
 /** 라우트 정의가 계층 규칙을 지키는지: public 만 통과, internal/debug 는 어떤 라우트에도 안 잡힌다. */
@@ -20,10 +28,32 @@ import reactor.core.publisher.Mono
         "modu.oauth.issuer=http://localhost:8000/auth-service",
     ],
 )
+@AutoConfigureWebTestClient
 class GatewayRoutesTest {
 
     @Autowired
     lateinit var routeLocator: RouteLocator
+
+    @Autowired
+    lateinit var client: WebTestClient
+
+    @MockitoBean
+    lateinit var decoder: ReactiveJwtDecoder
+
+    private fun jwt(aud: String, vararg roles: String): Jwt =
+        Jwt.withTokenValue("t").header("alg", "RS256").subject("7").audience(listOf(aud)).claim("roles", roles.toList()).build()
+
+    @BeforeEach
+    fun tokens() {
+        Mockito.`when`(decoder.decode("commerce-user")).thenReturn(Mono.just(jwt("modu-commerce", "ROLE_USER")))
+        Mockito.`when`(decoder.decode("chat-user")).thenReturn(Mono.just(jwt("modu-chat", "ROLE_USER")))
+        Mockito.`when`(decoder.decode("broken")).thenReturn(Mono.error(BadJwtException("bad signature")))
+    }
+
+    private fun call(method: HttpMethod, path: String, token: String?) =
+        client.method(method).uri(path)
+            .apply { if (token != null) headers { it.setBearerAuth(token) } }
+            .exchange()
 
     private fun firstMatch(method: HttpMethod, path: String): Route? {
         val exchange = MockServerWebExchange.from(MockServerHttpRequest.method(method, path).build())
@@ -112,16 +142,43 @@ class GatewayRoutesTest {
     }
 
     @Test
-    fun commerceAdmin_routesToCommerceServiceByContainerName() {
+    fun commerceAdmin_routesToCommerceServiceThroughEureka() {
         val route = firstMatch(HttpMethod.POST, "/commerce-service/api-admin/v1/products")!!
         assertEquals("commerce-service-admin", route.id)
-        // commerce-service 는 Eureka 에 없다. modu-infra 네트워크의 컨테이너 이름으로 간다.
-        assertEquals("http://commerce-service:8200", route.uri.toString())
+        assertEquals("lb://COMMERCE-SERVICE", route.uri.toString())
     }
 
     @Test
-    fun commerceAppApi_isNotRoutedThroughGateway() {
-        // 앱은 commerce-service(8200)를 직접 부른다. 게이트웨이에는 admin 계층만 연다.
+    fun commercePublic_tiersGetIsOpenEverythingElseNeedsCommerceToken() {
+        val open = firstMatch(HttpMethod.GET, "/commerce-service/api-public/v1/tiers")!!
+        assertEquals("commerce-service-public-open", open.id)
+        assertEquals("lb://COMMERCE-SERVICE", open.uri.toString())
+        // 등급표 GET 만 열린다. 같은 경로의 다른 메서드·하위 경로는 인증 라우트로 간다.
+        assertEquals("commerce-service-public", routeId(HttpMethod.POST, "/commerce-service/api-public/v1/tiers"))
+        assertEquals("commerce-service-public", routeId(HttpMethod.GET, "/commerce-service/api-public/v1/tiers/1"))
+        assertEquals("commerce-service-public", routeId(HttpMethod.GET, "/commerce-service/api-public/v1/products"))
+        assertEquals("commerce-service-public", routeId(HttpMethod.POST, "/commerce-service/api-public/v1/orders"))
+        assertEquals("lb://COMMERCE-SERVICE", firstMatch(HttpMethod.GET, "/commerce-service/api-public/v1/products")!!.uri.toString())
+    }
+
+    @Test
+    fun commercePublic_withoutTokenOrWithChatTokenIs401() {
+        for (token in listOf(null, "broken", "chat-user")) {
+            call(HttpMethod.GET, "/commerce-service/api-public/v1/products", token).expectStatus().isUnauthorized
+            call(HttpMethod.POST, "/commerce-service/api-public/v1/tiers", token).expectStatus().isUnauthorized
+        }
+    }
+
+    @Test
+    fun commercePublic_passesAuthAndReachesLoadBalancer() {
+        // 테스트에는 Eureka 인스턴스가 없으니 인증을 지나 lb:// 에 닿으면 503 이다(401 이 아니면 필터를 통과한 것).
+        call(HttpMethod.GET, "/commerce-service/api-public/v1/tiers", null).expectStatus().isEqualTo(503)
+        call(HttpMethod.GET, "/commerce-service/api-public/v1/products", "commerce-user").expectStatus().isEqualTo(503)
+    }
+
+    @Test
+    fun commerceOldAppApi_hasNoRoute() {
+        // /api/v1/** 는 /api-public/v1/** 로 바뀌었다. 옛 경로는 게이트웨이에 없다.
         assertNull(firstMatch(HttpMethod.GET, "/commerce-service/api/v1/products"))
     }
 
