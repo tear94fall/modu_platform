@@ -10,6 +10,15 @@ eureka:
     register-with-eureka: true
 
 modu:
+  # 시스템 콘솔 'API 문서'(ApiDocsController). 목록은 라우트의 lb:// 대상 + 아래 서비스(이름 → 기본 주소).
+  # lb:// 는 Eureka 로, http:// 는 그대로 부른다. 라우트가 없는 서비스(chat-store, schedule)는 문서만 보이고 Try it out 은 꺼진다.
+  api-docs:
+    extra-services:
+      # Eureka 에 등록하지 않는 별도 저장소(modu_commerce) 서비스라 컨테이너 이름으로 간다(commerce-service-admin 라우트와 같다).
+      commerce-service: ${COMMERCE_SERVICE_URI:http://commerce-service:8200}
+      ws-service: lb://ws-service
+      chat-store-service: lb://chat-store-service
+      schedule-service: lb://schedule-service
   oauth:
     # config-repo 가 덮어쓴다. 게이트웨이는 Eureka 대신 컨테이너 이름으로 auth-service 의 JWKS 를 직접 읽는다.
     issuer: ${MODU_OAUTH_ISSUER:http://192.168.0.3:8000/auth-service}
