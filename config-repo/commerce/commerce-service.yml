@@ -1,6 +1,6 @@
 # 커머스(modu_commerce) commerce-service 전용. spring.cloud.config.name=commerce,commerce-service 로 받는다.
-# 접속 정보의 컨테이너 이름은 modu_infra data 스택 기준이다. 개발 환경은 레플리카가 없어 replica 도 master 를 가리킨다.
-# 비밀번호는 modu_infra data/.env 의 COMMERCE_DB_PASSWORD 와 같은 값의 {cipher} 다.
+# 접속 정보의 컨테이너 이름은 modu_infra data 스택 기준이다. 읽기(replica)는 GTID 복제로 받는 mysql-commerce-replica 에 SELECT 전용 계정(commerce_ro)으로 붙는다.
+# 비밀번호는 modu_infra data/.env 의 COMMERCE_DB_PASSWORD(master), COMMERCE_RO_PASSWORD(replica) 와 같은 값의 {cipher} 다.
 spring:
   datasource:
     master:
@@ -8,9 +8,9 @@ spring:
       username: root
       password: '{cipher}bf3b701e8f39e61eb21c19dbc480c16d856a748bec1682dff922509eeaa8b3a4'
     replica:
-      url: jdbc:mysql://mysql-commerce:3306/commerce?useSSL=false&characterEncoding=UTF-8&serverTimezone=Asia/Seoul&allowPublicKeyRetrieval=true
-      username: root
-      password: '{cipher}bf3b701e8f39e61eb21c19dbc480c16d856a748bec1682dff922509eeaa8b3a4'
+      url: jdbc:mysql://mysql-commerce-replica:3306/commerce?useSSL=false&characterEncoding=UTF-8&serverTimezone=Asia/Seoul&allowPublicKeyRetrieval=true
+      username: commerce_ro
+      password: '{cipher}8667579a8bf2c1bcf2db72aa359a52001039aebd8c3c9b72d9de569a1d9cbcfe6be9746604716230ffe0b4732fa09a3d'
   # 기획전·이벤트 캐시(modu.cache). 메신저와 같은 Redis 클러스터를 쓰고, 키는 commerce: 로 시작한다.
   data:
     redis:
