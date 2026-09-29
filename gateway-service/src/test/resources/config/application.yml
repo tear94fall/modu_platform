@@ -4,3 +4,8 @@ spring:
   cloud:
     config:
       enabled: false
+# 테스트가 로컬에 떠 있는 Eureka(localhost:8761)에 instance-id gateway-service 로 등록·해제하지 않게 끈다
+# (실제 게이트웨이와 같은 id 라 해제하면 그쪽 등록이 지워진다). lb:// 는 인스턴스가 없어 503 이 된다.
+eureka:
+  client:
+    enabled: false
