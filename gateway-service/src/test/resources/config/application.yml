@@ -4,8 +4,18 @@ spring:
   cloud:
     config:
       enabled: false
-# 테스트가 로컬에 떠 있는 Eureka(localhost:8761)에 instance-id gateway-service 로 등록·해제하지 않게 끈다
-# (실제 게이트웨이와 같은 id 라 해제하면 그쪽 등록이 지워진다). lb:// 는 인스턴스가 없어 503 이 된다.
-eureka:
-  client:
-    enabled: false
+# 실제로는 config-repo 가 내려주는 서비스 주소. 테스트에선 아무것도 듣지 않는 localhost 포트라 라우트를 지나면 연결 실패(5xx)가 된다.
+# 서비스마다 포트를 다르게 둬서 API 문서 목록이 라우트 uri 로 서비스 이름을 되찾을 수 있게 한다(ServiceAddresses.nameOf).
+modu:
+  services:
+    auth-service: http://localhost:1
+    member-service: http://localhost:2
+    chat-service: http://localhost:3
+    chat-store-service: http://localhost:4
+    ws-service: http://localhost:5
+    push-service: http://localhost:6
+    storage-service: http://localhost:7
+    profile-service: http://localhost:8
+    point-service: http://localhost:9
+    schedule-service: http://localhost:10
+    commerce-service: http://localhost:11

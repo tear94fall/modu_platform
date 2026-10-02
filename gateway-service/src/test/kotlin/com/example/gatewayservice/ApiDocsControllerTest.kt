@@ -2,7 +2,8 @@ package com.example.gatewayservice
 
 import com.example.gatewayservice.apidocs.ApiDocsFetcher
 import com.example.gatewayservice.apidocs.ApiDocsService
-import com.example.gatewayservice.apidocs.LoadBalancedApiDocsFetcher
+import com.example.gatewayservice.apidocs.ServiceAddresses
+import com.example.gatewayservice.apidocs.WebClientApiDocsFetcher
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
@@ -22,7 +23,7 @@ import reactor.core.publisher.Mono
 import java.net.URI
 import java.util.concurrent.TimeoutException
 
-/** API 문서: 시스템 권한 토큰(ROLE_SYSTEM, aud=modu-admin)만 통과하고, 목록은 라우트의 lb:// 대상, 문서는 servers 를 게이트웨이 경유로 바꿔 준다. */
+/** API 문서: 시스템 권한 토큰(ROLE_SYSTEM, aud=modu-admin)만 통과하고, 목록은 라우트 uri 가 가리키는 modu.services 서비스, 문서는 servers 를 게이트웨이 경유로 바꿔 준다. */
 @SpringBootTest(
     properties = [
         "modu.internal-api.token=test-internal-token",
@@ -90,35 +91,51 @@ class ApiDocsControllerTest {
 
     @Test
     fun routedIgnoresWebSocketRoutes() {
-        fun route(uri: String, path: String) = org.springframework.cloud.gateway.route.RouteDefinition().apply {
+        fun route(uri: String, path: String, websocket: Boolean = false) = org.springframework.cloud.gateway.route.RouteDefinition().apply {
             this.uri = URI.create(uri)
             predicates = listOf(org.springframework.cloud.gateway.handler.predicate.PredicateDefinition("Path=$path"))
+            if (websocket) metadata = mapOf(ApiDocsService.WEBSOCKET_METADATA to true)
         }
-        assertEquals(false, ApiDocsService.isRouted(listOf(route("lb:ws://WS-SERVICE", "/ws-service/modu-chat/**")), "ws-service"))
-        assertEquals(false, ApiDocsService.isRouted(listOf(route("ws://ws-service:8080", "/ws-service/**")), "ws-service"))
-        assertEquals(true, ApiDocsService.isRouted(listOf(route("lb://WS-SERVICE", "/ws-service/api-admin/**")), "ws-service"))
+        // 실제 설정: uri 는 http://(modu.services.ws-service) 지만 metadata websocket: true 라 HTTP 라우트로 세지 않는다.
+        assertEquals(false, ApiDocsService.isRouted(listOf(route("http://ws-service:8090", "/ws-service/modu-chat/**", websocket = true)), "ws-service"))
+        assertEquals(false, ApiDocsService.isRouted(listOf(route("ws://ws-service:8090", "/ws-service/**")), "ws-service"))
+        assertEquals(true, ApiDocsService.isRouted(listOf(route("http://ws-service:8090", "/ws-service/api-admin/**")), "ws-service"))
         assertEquals(true, ApiDocsService.isRouted(listOf(route("http://commerce-service:8200", "/commerce-service/api-admin/**")), "commerce-service"))
-        assertEquals(true, ApiDocsService.isWebSocket(URI.create("lb:wss://X")))
-        assertEquals(false, ApiDocsService.isWebSocket(URI.create("lb://X")))
+        assertEquals(true, ApiDocsService.isWebSocket(route("wss://x:1", "/x/**")))
+        assertEquals(true, ApiDocsService.isWebSocket(route("http://x:1", "/x/**", websocket = true)))
+        assertEquals(false, ApiDocsService.isWebSocket(route("http://x:1", "/x/**")))
     }
 
     @Test
-    fun targetsUseLbForAllServicesIncludingCommerce() {
+    fun targetsAreModuServicesAddressesOfRoutesAndExtraServices() {
         val targets = context.getBean(ApiDocsService::class.java).targets().associate { it.name to it.baseUri.toString() }
-        assertEquals("lb://member-service", targets["member-service"])
-        assertEquals("lb://ws-service", targets["ws-service"]) // 라우트는 lb:ws://WS-SERVICE, 문서는 http
-        assertEquals("lb://chat-store-service", targets["chat-store-service"])
-        assertEquals("lb://schedule-service", targets["schedule-service"])
-        // commerce-service 는 extra-services 가 아니라 라우트(lb://COMMERCE-SERVICE)에서 잡힌다.
-        assertEquals("lb://commerce-service", targets["commerce-service"])
-        assertEquals(false, targets.keys.any { it in setOf("gateway-service", "config-service", "discovery-service") })
+        assertEquals("http://localhost:2", targets["member-service"])
+        assertEquals("http://localhost:5", targets["ws-service"]) // WebSocket 라우트의 주소로 http 문서를 받는다
+        assertEquals("http://localhost:4", targets["chat-store-service"]) // extra-services → ${modu.services.chat-store-service}
+        assertEquals("http://localhost:10", targets["schedule-service"])
+        // commerce-service 는 extra-services 가 아니라 라우트(${modu.services.commerce-service})에서 잡힌다.
+        assertEquals("http://localhost:11", targets["commerce-service"])
+        // config-service 라우트(http://localhost:8888)는 modu.services 에 없으니 목록에 없다. 게이트웨이 자신도.
+        assertEquals(false, targets.keys.any { it in setOf("gateway-service", "config-service", "localhost") })
     }
 
     @Test
-    fun docsOfRouteAndExtraServicesAreFetchedThroughEureka() {
-        Mockito.`when`(fetcher.fetch("commerce-service", URI.create("lb://commerce-service")))
+    fun serviceAddresses_nameOfMatchesSchemeHostPortCaseInsensitively() {
+        val addresses = ServiceAddresses(mapOf("Member-Service" to URI.create("http://member-service:8080"), "ws-service" to URI.create("http://ws-service:8090")))
+        assertEquals("member-service", addresses.nameOf(URI.create("HTTP://MEMBER-SERVICE:8080")))
+        assertEquals("member-service", addresses.nameOf(URI.create("http://member-service:8080/")))
+        assertEquals(null, addresses.nameOf(URI.create("http://member-service:8081")))
+        assertEquals(null, addresses.nameOf(URI.create("https://member-service:8080")))
+        assertEquals(null, addresses.nameOf(URI.create("http://config-service:8888")))
+        assertEquals(null, addresses.nameOf(URI.create("lb:ws://WS-SERVICE")))
+        assertEquals(null, addresses.nameOf(null))
+    }
+
+    @Test
+    fun docsOfRouteAndExtraServicesAreFetchedFromTheirAddress() {
+        Mockito.`when`(fetcher.fetch("commerce-service", URI.create("http://localhost:11")))
             .thenReturn(Mono.just(mapper.readTree("""{"openapi":"3.0.1","servers":[{"url":"http://commerce-service:8200"}]}""")))
-        Mockito.`when`(fetcher.fetch("chat-store-service", URI.create("lb://chat-store-service")))
+        Mockito.`when`(fetcher.fetch("chat-store-service", URI.create("http://localhost:4")))
             .thenReturn(Mono.just(mapper.readTree("""{"openapi":"3.0.1"}""")))
 
         get("/commerce-service", "system").expectStatus().isOk.expectBody()
@@ -133,7 +150,7 @@ class ApiDocsControllerTest {
         val doc = mapper.readTree(
             """{"openapi":"3.0.1","info":{"title":"member"},"servers":[{"url":"http://172.18.0.5:8080","description":"Generated server url"}],"paths":{"/api-public/member/me":{}}}""",
         )
-        Mockito.`when`(fetcher.fetch("member-service", URI.create("lb://member-service"))).thenReturn(Mono.just(doc))
+        Mockito.`when`(fetcher.fetch("member-service", URI.create("http://localhost:2"))).thenReturn(Mono.just(doc))
 
         get("/member-service", "system").expectStatus().isOk.expectBody()
             .jsonPath("$.openapi").isEqualTo("3.0.1")
@@ -146,14 +163,14 @@ class ApiDocsControllerTest {
 
     @Test
     fun docsAddServersWhenMissing() {
-        Mockito.`when`(fetcher.fetch("point-service", URI.create("lb://point-service"))).thenReturn(Mono.just(mapper.readTree("""{"openapi":"3.0.1"}""")))
+        Mockito.`when`(fetcher.fetch("point-service", URI.create("http://localhost:9"))).thenReturn(Mono.just(mapper.readTree("""{"openapi":"3.0.1"}""")))
         get("/point-service", "system").expectStatus().isOk.expectBody()
             .jsonPath("$.servers[0].url").isEqualTo("/point-service")
     }
 
     @Test
     fun unknownOrExcludedServiceIs404WithoutFetching() {
-        for (name in listOf("nope-service", "gateway-service", "config-service", "discovery-service", "MEMBER-SERVICE")) {
+        for (name in listOf("nope-service", "gateway-service", "config-service", "localhost", "MEMBER-SERVICE")) {
             get("/$name", "system").expectStatus().isNotFound.expectBody()
                 .jsonPath("$.message").isNotEmpty
         }
@@ -162,10 +179,10 @@ class ApiDocsControllerTest {
 
     @Test
     fun fetchFailureTimeoutOrNonObjectIs502() {
-        Mockito.`when`(fetcher.fetch("chat-service", URI.create("lb://chat-service"))).thenReturn(Mono.error(IllegalStateException("connection refused")))
-        Mockito.`when`(fetcher.fetch("push-service", URI.create("lb://push-service"))).thenReturn(Mono.error(TimeoutException("5s")))
-        Mockito.`when`(fetcher.fetch("storage-service", URI.create("lb://storage-service"))).thenReturn(Mono.just(mapper.readTree("[1,2]")))
-        Mockito.`when`(fetcher.fetch("auth-service", URI.create("lb://auth-service"))).thenReturn(Mono.empty())
+        Mockito.`when`(fetcher.fetch("chat-service", URI.create("http://localhost:3"))).thenReturn(Mono.error(IllegalStateException("connection refused")))
+        Mockito.`when`(fetcher.fetch("push-service", URI.create("http://localhost:6"))).thenReturn(Mono.error(TimeoutException("5s")))
+        Mockito.`when`(fetcher.fetch("storage-service", URI.create("http://localhost:7"))).thenReturn(Mono.just(mapper.readTree("[1,2]")))
+        Mockito.`when`(fetcher.fetch("auth-service", URI.create("http://localhost:1"))).thenReturn(Mono.empty())
 
         for (name in listOf("chat-service", "push-service", "storage-service", "auth-service")) {
             get("/$name", "system").expectStatus().isEqualTo(502).expectBody()
@@ -174,10 +191,10 @@ class ApiDocsControllerTest {
     }
 
     @Test
-    fun loadBalancedBuilderDoesNotReplaceTheDefaultWebClientBuilder() {
-        // @LoadBalanced 빌더는 defaultCandidate=false 라 부트의 기본 WebClient.Builder 는 그대로 있다.
-        assertEquals(2, context.getBeanNamesForType(WebClient.Builder::class.java).size)
+    fun fetcherUsesTheOnlyPlainWebClientBuilder() {
+        // 로드밸런서용 빌더는 없다. 부트의 기본 WebClient.Builder 하나뿐이고, 문서 조회는 그걸로 호스트 이름을 그대로 부른다.
+        assertEquals(1, context.getBeanNamesForType(WebClient.Builder::class.java).size)
         assertEquals(true, context.getBeansOfType(ApiDocsService::class.java).isNotEmpty())
-        assertEquals(0, context.getBeansOfType(LoadBalancedApiDocsFetcher::class.java).size) // 테스트에선 mock 으로 바꿔 끼웠다
+        assertEquals(0, context.getBeansOfType(WebClientApiDocsFetcher::class.java).size) // 테스트에선 mock 으로 바꿔 끼웠다
     }
 }

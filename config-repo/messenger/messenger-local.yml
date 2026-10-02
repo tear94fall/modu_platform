@@ -1,7 +1,17 @@
-eureka:
-  client:
-    service-url:
-      defaultZone: http://localhost:8761/eureka
+# IDE 실행(local 프로필): 서비스 주소를 localhost 로 바꾼다(포트는 application.yml 의 modu.services 와 같다).
+modu:
+  services:
+    auth-service: http://localhost:9900
+    member-service: http://localhost:8080
+    chat-service: http://localhost:9090
+    chat-store-service: http://localhost:8100
+    ws-service: http://localhost:8090
+    push-service: http://localhost:9990
+    storage-service: http://localhost:9999
+    profile-service: http://localhost:8880
+    point-service: http://localhost:9600
+    schedule-service: http://localhost:8110
+    commerce-service: http://localhost:8200
 
 spring:
   kafka:

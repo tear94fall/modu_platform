@@ -62,7 +62,7 @@ class GatewayConfigControllerTest {
     fun adminSeesRoutesInOrderWithAccessDefaultFiltersAndCors() {
         get("system").expectStatus().isOk.expectBody()
             .jsonPath("$.routes[0].id").isEqualTo("auth-service-oauth2")
-            .jsonPath("$.routes[0].uri").isEqualTo("lb://AUTH-SERVICE")
+            .jsonPath("$.routes[0].uri").isEqualTo("http://localhost:1") // ${modu.services.auth-service}
             .jsonPath("$.routes[0].access.type").isEqualTo("PUBLIC")
             .jsonPath("$.routes[0].access.role").doesNotExist()
             .jsonPath("$.routes[0].predicates[0].name").isEqualTo("Path")

@@ -1,8 +1,9 @@
 name: modu-platform
 
-# modu 프로젝트 공용 플랫폼: 설정 서버, 서비스 레지스트리, API 게이트웨이.
+# modu 프로젝트 공용 플랫폼: 설정 서버, API 게이트웨이.
 # 기동 순서: modu_infra(네트워크·데이터·관측성) → 이 스택 → modu_messenger backend / modu_commerce backend.
-# 다른 저장소의 서비스는 external 네트워크 modu-infra 에서 컨테이너 이름(config-service, discovery-service, gateway-service)으로 붙는다.
+# 다른 저장소의 서비스는 external 네트워크 modu-infra 에서 컨테이너 이름(config-service, gateway-service)으로 붙는다.
+# 서비스 레지스트리는 없다. 서비스끼리·게이트웨이는 config-repo 의 modu.services.* 주소(컨테이너 이름:포트)를 DNS 로 푼다.
 
 services:
   config-service:
@@ -35,33 +36,6 @@ services:
     stop_grace_period: 30s
     restart: always
 
-  discovery-service:
-    build:
-      context: ./discovery-service
-      dockerfile: ./Dockerfile
-    container_name: discovery-service
-    ports:
-      - 8761:8761
-    environment:
-      - CONFIG_SERVER_URI=http://config-service:8888
-      - JAVA_TOOL_OPTIONS=${DISCOVERY_AGENT_OPTS:-}
-    volumes:
-      - pinpoint-agent:/pinpoint-agent:ro
-    depends_on:
-      config-service:
-        condition: service_healthy
-    networks:
-      - modu-infra
-      - pinpoint
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8761/actuator/health/readiness | grep -q '\"UP\"' || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 6
-      start_period: 90s
-    stop_grace_period: 30s
-    restart: always
-
   gateway-service:
     build:
       context: ./gateway-service
@@ -77,8 +51,6 @@ services:
     depends_on:
       config-service:
         condition: service_healthy
-      discovery-service:
-        condition: service_started
     volumes:
       - pinpoint-agent:/pinpoint-agent:ro
     networks:
