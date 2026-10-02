@@ -38,12 +38,10 @@ class HealthProbesTest {
     }
 
     @Test
-    fun readiness_doesNotDependOnEurekaRegistry() {
+    fun readiness_dependsOnlyOnReadinessState() {
         val readiness = groups.get("readiness")!!
         assertTrue(readiness.isMember("readinessState"))
-        // Eureka 에 인스턴스가 없어도(discoveryComposite/eureka indicator) 게이트웨이는 ready 다. 설정 서버 연결도 마찬가지.
-        assertFalse(readiness.isMember("discoveryComposite"))
-        assertFalse(readiness.isMember("eureka"))
+        // 뒤 서비스가 떠 있는지(modu.services 주소)나 설정 서버 연결은 readiness 조건이 아니다.
         assertFalse(readiness.isMember("configServer"))
         assertTrue(groups.get("liveness")!!.isMember("livenessState"))
     }

@@ -18,7 +18,17 @@ modu:
     google:
       # 앱들이 requestIdToken 에 쓰는 웹 클라이언트 ID(비밀 아님). ID 토큰의 aud 가 이 값이어야 한다.
       audiences: [529862674339-34f6a7he3npv9kkufh8u8ie6mma3f92j.apps.googleusercontent.com]
-eureka:
-  client:
-    service-url:
-      defaultZone: http://discovery-service:8761/eureka/
+
+  services:
+    # 서비스끼리·게이트웨이가 부르는 주소. compose 에선 컨테이너 이름, k8s 에선 같은 이름·포트의 Service 로 맞춘다.
+    auth-service: http://auth-service:9900
+    member-service: http://member-service:8080
+    chat-service: http://chat-service:9090
+    chat-store-service: http://chat-store-service:8100
+    ws-service: http://ws-service:8090
+    push-service: http://push-service:9990
+    storage-service: http://storage-service:9999
+    profile-service: http://profile-service:8880
+    point-service: http://point-service:9600
+    schedule-service: http://schedule-service:8110
+    commerce-service: http://commerce-service:8200
