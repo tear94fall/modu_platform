@@ -1,5 +1,7 @@
 server:
   port: 8000
+  # SIGTERM 뒤 새 요청은 거절하고 처리 중인 요청은 끝까지 보낸다(Netty 도 지원). 롤링 배포·재시작 때 요청이 끊기지 않게.
+  shutdown: graceful
 
 eureka:
   instance:
@@ -26,6 +28,9 @@ modu:
 spring:
   application:
     name: gateway-service
+
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
   # oauth2-resource-server 스타터가 끌어온 Spring Security 자동 설정 중 기본 사용자·리소스 서버는 끈다.
   # 전 경로 permitAll 체인은 jwt/GatewaySecurityConfig 가 두고, 인증은 라우트별 AuthorizationHeaderFilter 가 JWKS 로 한다.
   autoconfigure:
@@ -228,6 +233,19 @@ management:
     web:
       exposure:
         include: health, info, prometheus
+  endpoint:
+    health:
+      # /actuator/health/liveness, /actuator/health/readiness (쿠버네티스 probe·compose healthcheck 용).
+      # 게이트웨이 자신의 actuator 다. 라우트는 모두 /<서비스>/... 로 시작하므로 /actuator 를 잡는 라우트는 없다(GatewayRoutesTest).
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          # 게이트웨이가 떴는지만 본다. Eureka 레지스트리 내용(인스턴스 유무)이나 설정 서버 연결은 readiness 조건이 아니다.
+          include: readinessState
+        liveness:
+          include: livenessState
   metrics:
     tags:
       application: ${spring.application.name}

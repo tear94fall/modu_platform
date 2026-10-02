@@ -183,6 +183,15 @@ class GatewayRoutesTest {
     }
 
     @Test
+    fun gatewayOwnActuator_hasNoRoute() {
+        // 게이트웨이 자신의 probe(/actuator/health/**)는 어떤 라우트에도 잡히지 않아야 한다.
+        assertNull(firstMatch(HttpMethod.GET, "/actuator/health"))
+        assertNull(firstMatch(HttpMethod.GET, "/actuator/health/liveness"))
+        assertNull(firstMatch(HttpMethod.GET, "/actuator/health/readiness"))
+        assertNull(firstMatch(HttpMethod.GET, "/actuator/prometheus"))
+    }
+
+    @Test
     fun gatewayOwnAdminApi_hasNoRoute() {
         // 게이트웨이 자체 관리 API(GatewayConfigController, ApiDocsController)는 어떤 라우트에도 잡히지 않아야 컨트롤러가 받는다.
         assertNull(firstMatch(HttpMethod.GET, "/gateway-service/api-admin/config"))

@@ -24,12 +24,15 @@ services:
     networks:
       - modu-infra
       - pinpoint
+    # readiness: 앱이 떴고 설정 저장소(/config-repo)를 읽을 수 있을 때만 UP. 다른 스택의 depends_on: service_healthy 게이트.
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8888/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8888/actuator/health/readiness | grep -q '\"UP\"' || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 40
       start_period: 20s
+    # SIGTERM 뒤 graceful shutdown(처리 중인 요청 완료, 최대 20s)이 끝날 때까지 기다린다.
+    stop_grace_period: 30s
     restart: always
 
   discovery-service:
@@ -50,6 +53,13 @@ services:
     networks:
       - modu-infra
       - pinpoint
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8761/actuator/health/readiness | grep -q '\"UP\"' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 90s
+    stop_grace_period: 30s
     restart: always
 
   gateway-service:
@@ -74,6 +84,13 @@ services:
     networks:
       - modu-infra
       - pinpoint
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/actuator/health/readiness | grep -q '\"UP\"' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 90s
+    stop_grace_period: 30s
     restart: always
 
 networks:
