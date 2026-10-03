@@ -1,12 +1,12 @@
 # 모든 제품(메신저·커머스)의 서비스가 공유하는 설정. 제품 전용 설정은 messenger/, commerce/ 에 둔다.
 # 시크릿은 config-service 가 {cipher} 를 복호화해 평문으로 내려주므로 클라이언트에는 별도 설정이 필요 없다.
 # 복호화 키는 modu_platform/.env 의 ENCRYPT_KEY 다.
-# 서비스 간(Feign) 호출 식별 토큰. /api-internal/** 은 이 값이 X-Internal-Token 헤더로
-# 와야만 통과한다. 플레이스홀더는 각 서비스 컨테이너의 환경변수로 풀린다 — 세 저장소(platform, messenger,
-# commerce)의 .env 에 같은 INTERNAL_API_TOKEN 이 있어야 하고, prod 에서는 강한 값을 넣어야 한다.
+# 서비스 간(Feign) 호출 식별 토큰. /api-internal/** 은 이 값이 X-Internal-Token 헤더로 와야만 통과한다.
+# 모든 서비스·게이트웨이가 여기서 받는다. config-service 자신은 이 파일을 읽지 않으므로 같은 값을
+# modu_platform/.env 의 INTERNAL_API_TOKEN 으로도 준다(둘이 같아야 한다 — README '시크릿 지도').
 modu:
   internal-api:
-    token: ${INTERNAL_API_TOKEN:modu-internal-dev-token}
+    token: '{cipher}40760f31c00e185c183e98dea8d8c4ae100710e7fb666b925f39a52f821ad31b3b79fb21d4f781787b97176f89948a21757076b521b6a3f12dcea5b9bf2ec105'
 
   # 백오피스 CORS 출처(gateway). 관리자 비밀번호 해시는 auth-service 전용이라 messenger/messenger.yml 에 있다.
   admin:
