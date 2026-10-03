@@ -16,12 +16,26 @@ auth-service 는 회원 데이터의 주인인 modu_messenger 에 남아 있습�
 # 1) modu_infra: 네트워크 modu-infra, pinpoint-docker, data, monitoring
 # 2) 이 스택
 cp .env.example .env            # ENCRYPT_KEY, INTERNAL_API_TOKEN 채우기 (config-service 전용 — 아래 '시크릿 지도')
-for s in config-service gateway-service; do (cd $s && ./gradlew bootJar); done
-docker compose up -d --build
+docker compose pull && docker compose up -d   # CI 가 올린 이미지 (아래 '이미지와 배포')
+# 또는 소스에서 직접: docker compose up -d --build  (jar 는 이미지 안에서 만든다, 로컬 ./gradlew bootJar 불필요)
 # 3) modu_messenger backend, modu_commerce backend (각 저장소 README)
 ```
 
 메신저·커머스 서비스는 config-service 에서 설정을 받으므로 이 스택이 먼저 떠 있어야 합니다. 서비스는 설정을 못 받으면 기동에 실패하고 compose 가 재시작합니다(`fail-fast`). 게이트웨이는 뒤 서비스가 아직 안 떠 있어도 자기 readiness 는 UP 이고, 그 라우트만 연결 실패(5xx)로 답하다가 서비스가 뜨면 바로 통합니다(등록 대기 같은 건 없습니다).
+
+## 이미지와 배포
+
+이미지는 GitHub Actions(`.github/workflows/images.yml`)가 만들어 GHCR 에 올립니다. Dockerfile 은 멀티스테이지라 소스에서 jar 까지 이미지 안에서 만들고, 로컬 `--build` 도 같은 파일을 씁니다(config-repo 는 이미지에 들어가지 않고 런타임 볼륨으로 마운트).
+
+| 이미지 | 태그 |
+|---|---|
+| `ghcr.io/tear94fall/modu-platform/config-service` | develop 푸시 → `develop-<sha7>`, `develop` / master 푸시 → `master-<sha7>`, `latest` |
+| `ghcr.io/tear94fall/modu-platform/gateway-service` | 위와 같음 |
+
+- PR(develop·master 대상)은 바뀐 서비스만 테스트 + 빌드하고 푸시하지 않습니다. develop/master 푸시는 테스트 + 빌드 + 푸시. `config-repo/` 만 바뀌면 빌드하지 않습니다.
+- `docker compose pull && docker compose up -d` 는 `IMAGE_TAG`(기본 `develop`) 태그를 받습니다. 특정 커밋으로 돌리려면 `IMAGE_TAG=develop-abc1234 docker compose up -d`.
+- `docker compose up -d --build` 는 로컬에서 같은 Dockerfile 로 빌드합니다(테스트는 건너뜀, Gradle 캐시는 BuildKit 캐시 마운트).
+- GHCR 패키지는 첫 푸시 때 **private** 으로 생깁니다. 저장소는 public 이므로 GitHub UI(프로필 → Packages → 패키지 → Package settings → Change visibility)에서 한 번 public 으로 바꿔야 `docker compose pull` 이 로그인 없이 됩니다.
 
 ## 서비스 주소
 

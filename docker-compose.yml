@@ -4,6 +4,9 @@ name: modu-platform
 # 기동 순서: modu_infra(네트워크·데이터·관측성) → 이 스택 → modu_messenger backend / modu_commerce backend.
 # 다른 저장소의 서비스는 external 네트워크 modu-infra 에서 컨테이너 이름(config-service, gateway-service)으로 붙는다.
 # 서비스 레지스트리는 없다. 서비스끼리·게이트웨이는 config-repo 의 modu.services.* 주소(컨테이너 이름:포트)를 DNS 로 푼다.
+# 이미지: GitHub Actions(.github/workflows/images.yml)가 develop/master 푸시마다 GHCR 에 올린다(ghcr.io/tear94fall/modu-platform/<service>).
+#   docker compose pull && docker compose up -d   → CI 이미지(IMAGE_TAG 로 태그 선택, 기본 develop)
+#   docker compose up -d --build                  → 로컬 빌드(같은 Dockerfile, 소스에서 jar 까지 만든다)
 
 # 모든 컨테이너 로그 줄에 compose 서비스·프로젝트 이름을 붙인다(json-file attrs). OTel Collector 가 container 필드와 앱/인프라 인덱스 구분에 쓴다(modu_infra monitoring).
 x-logging: &logging
@@ -13,13 +16,24 @@ x-logging: &logging
     max-size: "50m"
     max-file: "3"
 
+# 컨테이너 메모리 제한. JVM 은 -XX:MaxRAMPercentage=75 로 이 안에서 힙을 잡는다(1g → 힙 최대 768MiB).
+# k8s 의 resources.requests(mem_reservation)/limits(mem_limit) 와 같은 값으로 매니페스트에 옮긴다.
+x-jvm-resources: &jvm-resources
+  mem_limit: 1g
+  mem_reservation: 512m
+x-small-resources: &small-resources
+  mem_limit: 64m
+  mem_reservation: 16m
+
 services:
   config-service:
+    image: ghcr.io/tear94fall/modu-platform/config-service:${IMAGE_TAG:-develop}
     build:
       context: ./config-service
       dockerfile: ./Dockerfile
     container_name: config-service
     logging: *logging
+    <<: *jvm-resources
     ports:
       - 8888:8888
     environment:
@@ -47,11 +61,13 @@ services:
     restart: always
 
   gateway-service:
+    image: ghcr.io/tear94fall/modu-platform/gateway-service:${IMAGE_TAG:-develop}
     build:
       context: ./gateway-service
       dockerfile: ./Dockerfile
     container_name: gateway-service
     logging: *logging
+    <<: *jvm-resources
     ports:
       - 8000:8000
     environment:
