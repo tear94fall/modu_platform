@@ -5,12 +5,21 @@ name: modu-platform
 # 다른 저장소의 서비스는 external 네트워크 modu-infra 에서 컨테이너 이름(config-service, gateway-service)으로 붙는다.
 # 서비스 레지스트리는 없다. 서비스끼리·게이트웨이는 config-repo 의 modu.services.* 주소(컨테이너 이름:포트)를 DNS 로 푼다.
 
+# 모든 컨테이너 로그 줄에 compose 서비스·프로젝트 이름을 붙인다(json-file attrs). OTel Collector 가 container 필드와 앱/인프라 인덱스 구분에 쓴다(modu_infra monitoring).
+x-logging: &logging
+  driver: json-file
+  options:
+    labels: com.docker.compose.service,com.docker.compose.project
+    max-size: "50m"
+    max-file: "3"
+
 services:
   config-service:
     build:
       context: ./config-service
       dockerfile: ./Dockerfile
     container_name: config-service
+    logging: *logging
     ports:
       - 8888:8888
     environment:
@@ -42,6 +51,7 @@ services:
       context: ./gateway-service
       dockerfile: ./Dockerfile
     container_name: gateway-service
+    logging: *logging
     ports:
       - 8000:8000
     environment:
