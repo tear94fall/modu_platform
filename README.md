@@ -13,12 +13,10 @@ auth-service 는 회원 데이터의 주인인 modu_messenger 에 남아 있습�
 ## 기동 순서
 
 ```bash
-# 1) modu_infra: 네트워크 modu-infra, pinpoint-docker, data, monitoring
-# 2) 이 스택
-cp .env.example .env            # ENCRYPT_KEY, INTERNAL_API_TOKEN 채우기 (config-service 전용 — 아래 '시크릿 지도')
-docker compose pull && docker compose up -d   # CI 가 올린 이미지 (아래 '이미지와 배포')
-# 또는 소스에서 직접: docker compose up -d --build  (jar 는 이미지 안에서 만든다, 로컬 ./gradlew bootJar 불필요)
-# 3) modu_messenger backend, modu_commerce backend (각 저장소 README)
+# dev 는 전부 k8s(modu_infra k8s/). config-service·gateway-service 도 거기서 뜬다.
+cp .env.example .env            # ENCRYPT_KEY, INTERNAL_API_TOKEN — k8s Secret config-service 의 원본(아래 '시크릿 지도')
+cd ../modu_infra/k8s && kubectl -n modu create secret generic config-service --from-literal=ENCRYPT_KEY=… --from-literal=INTERNAL_API_TOKEN=…
+overlays/dev/gen-config-repo-configmaps.sh && kubectl apply -k overlays/dev   # config-repo 를 ConfigMap 으로
 ```
 
 메신저·커머스 서비스는 config-service 에서 설정을 받으므로 이 스택이 먼저 떠 있어야 합니다. 서비스는 설정을 못 받으면 기동에 실패하고 compose 가 재시작합니다(`fail-fast`). 게이트웨이는 뒤 서비스가 아직 안 떠 있어도 자기 readiness 는 UP 이고, 그 라우트만 연결 실패(5xx)로 답하다가 서비스가 뜨면 바로 통합니다(등록 대기 같은 건 없습니다).
@@ -33,9 +31,7 @@ docker compose pull && docker compose up -d   # CI 가 올린 이미지 (아래 
 | `ghcr.io/tear94fall/modu-platform/gateway-service` | 위와 같음 |
 
 - PR(develop·master 대상)은 바뀐 서비스만 테스트 + 빌드하고 푸시하지 않습니다. develop/master 푸시는 테스트 + 빌드 + 푸시. `config-repo/` 만 바뀌면 빌드하지 않습니다.
-- `docker compose pull && docker compose up -d` 는 `IMAGE_TAG`(기본 `develop`) 태그를 받습니다. 특정 커밋으로 돌리려면 `IMAGE_TAG=develop-abc1234 docker compose up -d`.
-- `docker compose up -d --build` 는 로컬에서 같은 Dockerfile 로 빌드합니다(테스트는 건너뜀, Gradle 캐시는 BuildKit 캐시 마운트).
-- GHCR 패키지는 첫 푸시 때 **private** 으로 생깁니다. 저장소는 public 이므로 GitHub UI(프로필 → Packages → 패키지 → Package settings → Change visibility)에서 한 번 public 으로 바꿔야 `docker compose pull` 이 로그인 없이 됩니다.
+- 배포: dev 는 **k8s**(modu_infra `k8s/`, 네임스페이스 `modu`)에서 돕니다. CI 가 GHCR 에 올린 태그를 `modu_infra/k8s/overlays/dev/kustomization.yaml` 의 `images[].newTag` 에 적고 `kubectl apply -k overlays/dev` 하면 그 Deployment 만 롤링됩니다(빠르게는 `kubectl -n modu set image deploy/<svc> <svc>=<이미지>:<태그>`). 로컬에서 빌드한 이미지를 쓰려면 `docker build -t <이미지>:local <디렉터리>` → `docker save <이미지>:local | docker exec -i desktop-control-plane ctr -n k8s.io images import -` 뒤 태그를 `local` 로 적습니다(Dockerfile 은 CI 와 같은 파일). GHCR 패키지는 저장소가 public 이라 처음 푸시 때부터 public 으로 생깁니다(로그인 없이 pull).
 
 ## 서비스 주소
 
@@ -49,7 +45,7 @@ modu:
     # ... 서비스마다 http://<이름>:<포트>
 ```
 
-- 이름을 DNS 로 풉니다. docker compose 에선 컨테이너 이름(`container_name`)이, 쿠버네티스에선 같은 이름의 `Service` 가 그 이름이어야 하고 포트도 같아야 합니다. 서비스 레지스트리·클라이언트 로드밸런서는 없습니다(k8s 에선 Service 가 분산합니다).
+- 이름을 DNS 로 풉니다. 쿠버네티스의 같은 이름 `Service` 가 그 이름이고 포트도 같아야 합니다(compose 시절엔 컨테이너 이름이었습니다). 서비스 레지스트리·클라이언트 로드밸런서는 없습니다(k8s 에선 Service 가 분산합니다).
 - 게이트웨이 라우트의 `uri` 는 전부 `${modu.services.<이름>}` 입니다. ws-service 라우트도 같은 http 주소를 쓰고, `Upgrade: websocket` 요청은 게이트웨이가 ws 로 바꿔 프록시합니다. 시스템 콘솔 'API 문서' 목록도 라우트 uri 를 이 표에서 되찾아 만듭니다.
 - IDE 로 서비스를 띄울 땐 `messenger/messenger-local.yml`(local 프로필)이 같은 키를 `http://localhost:<포트>` 로 덮어씁니다.
 - 서비스를 새로 만들면 여기 한 줄 추가하고, 각 서비스의 `@FeignClient(url = "\${modu.services.<이름>}")` 와 게이트웨이 라우트가 그 키를 씁니다.
