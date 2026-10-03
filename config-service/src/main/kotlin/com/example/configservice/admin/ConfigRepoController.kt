@@ -34,7 +34,7 @@ class ConfigRepoController(private val reader: ConfigRepoReader) {
         reader.read(path)?.let { ResponseEntity.ok(it) } ?: ResponseEntity.notFound().build()
 }
 
-/** 관리 경로(/api-admin 아래)는 X-Internal-Token 이 맞아야 연다. 토큰이 비어 있으면 모두 거절한다. */
+/** 관리 경로(/api-admin 아래)와 암·복호화(/encrypt, /decrypt)는 X-Internal-Token 이 맞아야 연다. 토큰이 비어 있으면 모두 거절한다. */
 class InternalTokenInterceptor(token: String) : HandlerInterceptor {
     private val expected = token.toByteArray()
 
@@ -60,6 +60,8 @@ class ConfigRepoAdminConfig(
         ConfigRepoReader.fromLocations(native.searchLocations)
 
     override fun addInterceptors(registry: InterceptorRegistry) {
-        registry.addInterceptor(InternalTokenInterceptor(internalToken)).addPathPatterns("/api-admin/**")
+        // /decrypt 가 열려 있으면 config-repo 의 {cipher} 값을 아무나 평문으로 바꿀 수 있다. /encrypt 도 같이 잠근다(시크릿 추가 절차는 README).
+        registry.addInterceptor(InternalTokenInterceptor(internalToken))
+            .addPathPatterns("/api-admin/**", "/encrypt", "/encrypt/**", "/decrypt", "/decrypt/**")
     }
 }
