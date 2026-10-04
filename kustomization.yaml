@@ -1,0 +1,33 @@
+# config-repo → ConfigMap 3개 (네임스페이스 modu). Argo CD Application `modu-config-repo`(modu_infra k8s/cicd/argocd/applications.yaml)가
+# 이 저장소의 루트(path ".")를 빌드해 적용한다. 저장소 루트에 두는 이유: kustomize 는 kustomization 디렉터리 바깥 파일을 못 읽는다.
+# ConfigMap 이름은 고정(해시 접미사 없음) — modu_infra base/platform/config-service.yaml 이 이름으로 마운트한다
+# (/config-repo, /config-repo/messenger, /config-repo/commerce). 키 = 파일 이름(ConfigMap 키에 / 를 못 쓰므로 디렉터리마다 하나).
+# 값은 전부 {cipher} 암호문이라 비밀이 아니다(복호화 키 ENCRYPT_KEY 는 k8s Secret config-service 에만).
+# config-repo 에 파일을 추가하면 여기 files 에도 추가해야 한다(kustomize 는 glob 이 없다) — ./k8s-check.sh 가 빠진 파일을 잡는다.
+# 반영: main/develop 에 머지 → Argo 에서 modu-config-repo Sync → config-service 는 기동 때 읽은 search-locations 를 다시 스캔하므로
+#   kubectl -n modu rollout restart deploy/config-service
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: modu
+
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    app.kubernetes.io/part-of: modu
+    app.kubernetes.io/component: config-repo
+
+configMapGenerator:
+  - name: config-repo-root
+    files:
+      - config-repo/application.yml
+  - name: config-repo-messenger
+    files:
+      - config-repo/messenger/chat-store-service.yml
+      - config-repo/messenger/messenger-local.yml
+      - config-repo/messenger/messenger.yml
+      - config-repo/messenger/push-service.yml
+      - config-repo/messenger/storage-service.yml
+  - name: config-repo-commerce
+    files:
+      - config-repo/commerce/commerce-service.yml

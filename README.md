@@ -16,7 +16,7 @@ auth-service 는 회원 데이터의 주인인 modu_messenger 에 남아 있습�
 # dev 는 전부 k8s(modu_infra k8s/). config-service·gateway-service 도 거기서 뜬다.
 cp .env.example .env            # ENCRYPT_KEY, INTERNAL_API_TOKEN — k8s Secret config-service 의 원본(아래 '시크릿 지도')
 cd ../modu_infra/k8s && kubectl -n modu create secret generic config-service --from-literal=ENCRYPT_KEY=… --from-literal=INTERNAL_API_TOKEN=…
-overlays/dev/gen-config-repo-configmaps.sh && kubectl apply -k overlays/dev   # config-repo 를 ConfigMap 으로
+kubectl apply -k ~/workspace/modu_platform   # config-repo → ConfigMap 3개(루트 kustomization.yaml). 평소엔 Argo CD Application modu-config-repo 가 Sync 한다
 ```
 
 메신저·커머스 서비스는 config-service 에서 설정을 받으므로 이 스택이 먼저 떠 있어야 합니다. 서비스는 설정을 못 받으면 기동에 실패하고 compose 가 재시작합니다(`fail-fast`). 게이트웨이는 뒤 서비스가 아직 안 떠 있어도 자기 readiness 는 UP 이고, 그 라우트만 연결 실패(5xx)로 답하다가 서비스가 뜨면 바로 통합니다(등록 대기 같은 건 없습니다).
@@ -31,7 +31,7 @@ overlays/dev/gen-config-repo-configmaps.sh && kubectl apply -k overlays/dev   # 
 | `ghcr.io/tear94fall/modu-platform/gateway-service` | 위와 같음 |
 
 - PR(develop·master 대상)은 바뀐 서비스만 테스트 + 빌드하고 푸시하지 않습니다. develop/master 푸시는 테스트 + 빌드 + 푸시. `config-repo/` 만 바뀌면 빌드하지 않습니다.
-- 배포: dev 는 **k8s**(modu_infra `k8s/`, 네임스페이스 `modu`)에서 돕니다. CI 가 GHCR 에 올린 태그를 `modu_infra/k8s/overlays/dev/kustomization.yaml` 의 `images[].newTag` 에 적고 `kubectl apply -k overlays/dev` 하면 그 Deployment 만 롤링됩니다(빠르게는 `kubectl -n modu set image deploy/<svc> <svc>=<이미지>:<태그>`). 로컬에서 빌드한 이미지를 쓰려면 `docker build -t <이미지>:local <디렉터리>` → `docker save <이미지>:local | docker exec -i desktop-control-plane ctr -n k8s.io images import -` 뒤 태그를 `local` 로 적습니다(Dockerfile 은 CI 와 같은 파일). GHCR 패키지는 저장소가 public 이라 처음 푸시 때부터 public 으로 생깁니다(로그인 없이 pull).
+- 배포: dev 는 **k8s**(modu_infra `k8s/`, 네임스페이스 `modu`)에서 돕니다. CI 가 GHCR 에 올린 태그를 `modu_infra/k8s/overlays/dev/kustomization.yaml` 의 `images[].newTag` 에 적어 main 에 머지하고 **Argo CD**(http://localhost:8090, Application `modu-dev`)에서 Sync 하면 그 Deployment 만 롤링됩니다(급할 땐 `kubectl apply -k overlays/dev` 도 되지만 Argo 가 OutOfSync 로 표시)(빠르게는 `kubectl -n modu set image deploy/<svc> <svc>=<이미지>:<태그>`). 로컬에서 빌드한 이미지를 쓰려면 `docker build -t <이미지>:local <디렉터리>` → `docker save <이미지>:local | docker exec -i desktop-control-plane ctr -n k8s.io images import -` 뒤 태그를 `local` 로 적습니다(Dockerfile 은 CI 와 같은 파일). GHCR 패키지는 저장소가 public 이라 처음 푸시 때부터 public 으로 생깁니다(로그인 없이 pull).
 
 ## 서비스 주소
 
