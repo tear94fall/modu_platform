@@ -1,4 +1,9 @@
-# storage-service 전용 설정.
-minio:
-  accessKey: '{cipher}b8079457dd9bb2ea31f11d5feffaf6b3ccaff7ba6f3a2fc9120568e0b4dcfbd8'
-  secretKey: '{cipher}3c463740f19a15b31d11e1ffa55200680def33c9dac0924a818ab677302fc0ee'
+# storage-service 전용 설정. 오브젝트 스토리지 = Ceph RGW(S3 호환, modu_infra k8s/ceph) — 2026-10-05 MinIO 에서 전환.
+# 키는 Rook 이 만든 CephObjectStoreUser storage-service 의 Secret(rook-ceph-object-user-modu-storage-service) 값을 {cipher} 로 넣은 것.
+# 사용자를 다시 만들면(키 회전) 여기 두 값을 다시 암호화해 바꾼다(README '시크릿 지도').
+s3:
+  endpoint: http://rgw:80          # modu 네임스페이스 ExternalName Service rgw → rook-ceph-rgw-modu.rook-ceph.svc
+  region: us-east-1                # RGW 는 아무 값이나 받는다(SDK 가 요구)
+  bucket: file-storage
+  accessKey: '{cipher}c798234ee7238fd89d689aff4471a026718db00c0ff4abbef61e908b0c56bccd210c3f793a4eab6119b53884346acfad'
+  secretKey: '{cipher}74cce5a9dc6579d8b1e94bfc85fcf7599b640536bfa02d4cc029066ed2e1156ab180e89b93a9cee812ecf355019e610e14853d578b080a6e454809bdb912ada7'
