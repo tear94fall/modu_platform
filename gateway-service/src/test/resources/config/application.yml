@@ -19,3 +19,4 @@ modu:
     point-service: http://localhost:9
     schedule-service: http://localhost:10
     commerce-service: http://localhost:11
+    deploy-service: http://localhost:12

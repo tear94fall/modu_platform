@@ -32,3 +32,4 @@ modu:
     point-service: http://point-service:9600
     schedule-service: http://schedule-service:8110
     commerce-service: http://commerce-service:8200
+    deploy-service: http://deploy-service:8900

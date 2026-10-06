@@ -21,6 +21,7 @@ configMapGenerator:
   - name: config-repo-root
     files:
       - config-repo/application.yml
+      - config-repo/deploy-service.yml
   - name: config-repo-messenger
     files:
       - config-repo/messenger/chat-store-service.yml

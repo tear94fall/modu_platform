@@ -6,6 +6,7 @@ modu 프로젝트(modu_messenger, modu_commerce, modu_admin)가 같이 쓰는 �
 |---|---|---|
 | config-service | 8888 | Spring Cloud Config(native). `config-repo/` 를 서빙하고 `{cipher}` 값을 복호화한다. 관리 콘솔용 조회 `GET /api-admin/config-repo/files`, `/file?path=` 는 비밀값을 가려서 내려주고 게이트웨이(`/config-service/api-admin/**`, 관리자 토큰)로만 연다. |
 | gateway-service | 8000 | Spring Cloud Gateway. JWT 검증(auth-service JWKS), 서비스 라우팅(`modu.services.*` 주소), 백오피스 CORS. |
+| deploy-service | 8900 | 모두 시스템 "배포" 탭 백엔드 — GHCR 태그 조회, modu_infra `kustomization.yaml` 태그 커밋, Argo CD Sync(그 Deployment 만), 롤아웃 진행률. `/deploy-service/api-system/**`(ROLE_SYSTEM, 내부 토큰)로만 연다. 설정은 `config-repo/deploy-service.yml`(`deploy.*`), 배포 이력은 메모리(최근 50건, 재시작하면 사라짐). |
 
 auth-service 는 회원 데이터의 주인인 modu_messenger 에 남아 있습니다(게이트웨이는 컨테이너 이름 `auth-service` 로 JWKS 를 읽습니다).
 서비스 레지스트리(Eureka)는 2026-10-03 에 없앴습니다. 아래 "서비스 주소" 참고.
@@ -29,6 +30,7 @@ kubectl apply -k ~/workspace/modu_platform   # config-repo → ConfigMap 3개(�
 |---|---|
 | `ghcr.io/tear94fall/modu-platform/config-service` | develop 푸시 → `develop-<sha7>`, `develop` / master 푸시 → `master-<sha7>`, `latest` |
 | `ghcr.io/tear94fall/modu-platform/gateway-service` | 위와 같음 |
+| `ghcr.io/tear94fall/modu-platform/deploy-service` | 위와 같음 |
 
 - PR(develop·master 대상)은 바뀐 서비스만 테스트 + 빌드하고 푸시하지 않습니다. develop/master 푸시는 테스트 + 빌드 + 푸시. `config-repo/` 만 바뀌면 빌드하지 않습니다.
 - 배포: dev 는 **k8s**(modu_infra `k8s/`, 네임스페이스 `modu`)에서 돕니다. CI 가 GHCR 에 올린 태그를 `modu_infra/k8s/overlays/dev/kustomization.yaml` 의 `images[].newTag` 에 적어 main 에 머지하고 **Argo CD**(http://localhost:8090, Application `modu-dev`)에서 Sync 하면 그 Deployment 만 롤링됩니다(급할 땐 `kubectl apply -k overlays/dev` 도 되지만 Argo 가 OutOfSync 로 표시)(빠르게는 `kubectl -n modu set image deploy/<svc> <svc>=<이미지>:<태그>`). 로컬에서 빌드한 이미지를 쓰려면 `docker build -t <이미지>:local <디렉터리>` → `docker save <이미지>:local | docker exec -i desktop-control-plane ctr -n k8s.io images import -` 뒤 태그를 `local` 로 적습니다(Dockerfile 은 CI 와 같은 파일). GHCR 패키지는 저장소가 public 이라 처음 푸시 때부터 public 으로 생깁니다(로그인 없이 pull).
@@ -56,6 +58,7 @@ modu:
 ```
 config-repo/
   application.yml        # 모든 제품 공통: 내부 토큰, 백오피스, OAuth(JWKS·클라이언트), 서비스 주소(modu.services.*)
+  deploy-service.yml     # deploy-service 전용(루트에 둔다 — 제품이 아니라 플랫폼 서비스): GitHub·Argo CD 토큰({cipher}), 배포 대상 서비스 목록
   messenger/             # 메신저 전용: messenger.yml(kafka·redis·rabbitmq·datasource), messenger-local.yml, storage-service.yml, chat-store-service.yml
   commerce/              # 커머스 전용: commerce-service.yml 등
 ```
@@ -77,6 +80,7 @@ config-repo/
 | 서비스 간 내부 토큰 `modu.internal-api.token` | `config-repo/application.yml` | 모든 서비스, 게이트웨이(X-Internal-Token 부착) |
 | MySQL master/replica 비밀번호, RSA 서명 키, MinIO 키, Mongo URI | `messenger/messenger.yml`, `messenger/storage-service.yml`, `messenger/chat-store-service.yml`, `commerce/commerce-service.yml` | 각 서비스 |
 | Firebase 서비스 계정 키(JSON → base64) | `messenger/push-service.yml`, `commerce/commerce-service.yml` | push-service, commerce-service |
+| GitHub 토큰 `deploy.github.token`(modu_infra contents:write + read:packages), Argo CD API 토큰 `deploy.argocd.token`(applications get/sync) | `config-repo/deploy-service.yml` | deploy-service |
 | (없음) Google 로그인 | — | ID 토큰의 aud 만 검사하므로 client secret 이 필요 없다. `modu.oauth.google.audiences`(공개 값)는 `application.yml` |
 | **부트스트랩** `ENCRYPT_KEY`(복호화 키), `INTERNAL_API_TOKEN`(config-service 의 /api-admin·/encrypt·/decrypt 보호) | `modu_platform/.env` → config-service 환경변수 | config-service 자신. config 에서 받을 수 없는 유일한 둘. k8s 에선 Secret 하나(`config-service`) |
 
