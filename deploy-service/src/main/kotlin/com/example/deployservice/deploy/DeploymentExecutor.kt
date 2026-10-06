@@ -54,23 +54,25 @@ class DeploymentExecutor(
     }
 
     fun run(id: String) {
-        val record = store.get(id) ?: return
+        val record = runCatching { store.get(id) }
+            .getOrElse { log.error("deployment {} could not be read; not running it", id, it); return }
+            ?: return
         val spec = properties.service(record.service)
             ?: return fail(id, Step.COMMIT, "알 수 없는 서비스: ${record.service}")
         try {
             val revision = commit(record, spec)
             sync(id, record.service, revision)
             rollout(id, record.service)
-            store.update(id) {
+            write(id) {
                 it.copy(status = DeploymentStatus.SUCCEEDED, step = Step.DONE, percent = Progress.DONE, finishedAt = now())
             }
             log.info("deployment {} {} → {} succeeded", id, record.service, record.tag)
         } catch (e: DeployFailure) {
-            val step = store.get(id)?.step ?: Step.COMMIT
+            val step = currentStep(id)
             log.warn("deployment {} failed at {}: {}", id, step, e.message)
             fail(id, step, e.message ?: "실패")
         } catch (e: Exception) {
-            val step = store.get(id)?.step ?: Step.COMMIT
+            val step = currentStep(id)
             log.error("deployment {} crashed at {}", id, step, e)
             fail(id, step, "${step} 단계에서 오류: ${e.message ?: e.javaClass.simpleName}")
         }
@@ -87,7 +89,7 @@ class DeploymentExecutor(
             .getOrElse { throw DeployFailure("kustomization.yaml 읽기 실패: ${it.message}", it) }
 
         val previousTag = Kustomization.currentTag(file.content, spec.image) ?: "develop"
-        store.update(id) { it.copy(previousTag = previousTag) }
+        write(id) { it.copy(previousTag = previousTag) }
 
         if (previousTag == record.tag) {
             val head = runCatching { github.branchHead(gh.infraRepo, gh.infraBranch) }
@@ -101,7 +103,7 @@ class DeploymentExecutor(
         val message = "deploy: ${spec.name} → ${record.tag} (by ${record.by})"
         val commit = runCatching { github.putFile(gh.infraRepo, gh.infraBranch, gh.kustomizationPath, updated, file.sha, message) }
             .getOrElse { throw DeployFailure("커밋 실패: ${it.message}", it) }
-        store.update(id) { it.copy(commit = CommitView(commit.sha, commit.htmlUrl)) }
+        write(id) { it.copy(commit = CommitView(commit.sha, commit.htmlUrl)) }
         finishStep(id, Step.COMMIT, Progress.COMMIT_DONE, "커밋 ${commit.sha.take(7)}")
         return commit.sha
     }
@@ -123,7 +125,7 @@ class DeploymentExecutor(
         val resource = ArgoResource("apps", "Deployment", service, properties.kubernetes.namespace)
         runCatching { argo.sync(app, revision, listOf(resource)) }
             .getOrElse { throw DeployFailure("Argo CD sync 요청 실패: ${it.message}", it) }
-        store.update(id) { it.copy(percent = Progress.SYNC_REQUESTED) }
+        write(id) { it.copy(percent = Progress.SYNC_REQUESTED) }
         setStepMessage(id, Step.SYNC, "동기화 중 (${revision.take(7)})")
 
         var phase: String? = null
@@ -162,7 +164,7 @@ class DeploymentExecutor(
                 available = deployment.available,
                 pods = pods.map { PodView(it.name, it.phase, it.ready, it.reason) },
             )
-            store.update(id) { it.copy(rollout = view, percent = Progress.rollout(deployment.ready, deployment.desired)) }
+            write(id) { it.copy(rollout = view, percent = Progress.rollout(deployment.ready, deployment.desired)) }
             setStepMessage(id, Step.ROLLOUT, "준비 ${deployment.ready}/${deployment.desired}")
 
             pods.firstOrNull { it.fromNewestReplicaSet && it.reason in FAILING_POD_REASONS }?.let { bad ->
@@ -171,7 +173,7 @@ class DeploymentExecutor(
             deployment.rolledOut
         }
         if (!done) throw DeployFailure("롤아웃이 ${timeouts.rollout.toMinutes()}분 안에 끝나지 않았습니다.")
-        val ready = store.get(id)?.rollout
+        val ready = runCatching { store.get(id)?.rollout }.getOrNull()
         finishStep(id, Step.ROLLOUT, Progress.DONE, "준비 ${ready?.ready ?: 0}/${ready?.desired ?: 0}")
     }
 
@@ -179,30 +181,46 @@ class DeploymentExecutor(
         "파드 ${pod.name} ${pod.reason}" + (pod.message.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
 
     // ---- 기록 갱신 ---------------------------------------------------------------------------------------------------------
+    // 저장소(DB)가 실패해도 배포 스레드가 조용히 죽지 않게: 진행 중 쓰기 실패는 DeployFailure 로 바꿔 기록을 FAILED 로 닫고,
+    // FAILED 를 쓰는 것마저 실패하면 로그에 남긴다(DB 가 내려간 상황 — 재시작 뒤 StaleDeploymentRecovery 가 RUNNING 을 닫는다).
+
+    /** 진행 상황 한 줄 UPDATE. 저장소 오류는 [DeployFailure] 로 — run() 의 catch 가 FAILED 로 닫는다. */
+    private fun write(id: String, update: (DeploymentRecord) -> DeploymentRecord): DeploymentRecord? =
+        try {
+            store.update(id, update)
+        } catch (e: Exception) {
+            throw DeployFailure("배포 기록 저장 실패(DB): ${e.message ?: e.javaClass.simpleName}", e)
+        }
+
+    private fun currentStep(id: String): Step = runCatching { store.get(id)?.step }.getOrNull() ?: Step.COMMIT
 
     private fun startStep(id: String, step: Step, percent: Int) {
         val at = now()
-        store.update(id) {
+        write(id) {
             it.copy(step = step, percent = percent).withStep(step) { s -> s.copy(status = StepStatus.RUNNING, startedAt = at) }
         }
     }
 
     private fun setStepMessage(id: String, step: Step, message: String) {
-        store.update(id) { it.withStep(step) { s -> s.copy(message = message) } }
+        write(id) { it.withStep(step) { s -> s.copy(message = message) } }
     }
 
     private fun finishStep(id: String, step: Step, percent: Int, message: String) {
         val at = now()
-        store.update(id) {
+        write(id) {
             it.copy(percent = percent).withStep(step) { s -> s.copy(status = StepStatus.SUCCEEDED, message = message, finishedAt = at) }
         }
     }
 
     private fun fail(id: String, step: Step, error: String) {
         val at = now()
-        store.update(id) {
-            it.copy(status = DeploymentStatus.FAILED, error = error, finishedAt = at)
-                .withStep(step) { s -> s.copy(status = StepStatus.FAILED, message = error, startedAt = s.startedAt ?: at, finishedAt = at) }
+        try {
+            store.update(id) {
+                it.copy(status = DeploymentStatus.FAILED, error = error, finishedAt = at)
+                    .withStep(step) { s -> s.copy(status = StepStatus.FAILED, message = error, startedAt = s.startedAt ?: at, finishedAt = at) }
+            }
+        } catch (e: Exception) {
+            log.error("deployment {} could not be marked FAILED at {} ({}): {}", id, step, error, e.message, e)
         }
     }
 

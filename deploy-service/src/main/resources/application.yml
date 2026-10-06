@@ -20,6 +20,12 @@ spring:
     config:
       fail-fast: true
 
+  # 배포 이력 DB(modu-platform.deployment). spring.datasource.master(mysql-platform)·replica(mysql-platform-replica)와 jpa.hibernate.ddl-auto(validate,
+  # master 에만 적용)는 config-repo/deploy-service.yml 이 내려준다 — 여기에 datasource 기본값을 두지 않는다(비밀번호는 {cipher}).
+  # RW/RO 라우팅은 RwJpaConfig·RoJpaConfig·JpaDeploymentStore. 스키마는 modu_infra data/mysql/schema/platform.modu-platform.sql.
+  jpa:
+    open-in-view: false
+
 # modu.internal-api.token 은 config-repo 의 application.yml 이 내려준다. 여기 기본값을 두지 않는다 —
 # 비어 있으면 InternalTokenFilter 가 기동을 거부한다(빈 토큰은 누구나 통과시키므로).
 
@@ -36,8 +42,9 @@ management:
       show-details: never
       group:
         readiness:
-          # 서비스가 떴는지만 본다. GitHub·Argo CD·API 서버는 요청 때 부르는 외부 의존이라 readiness 조건이 아니다.
-          include: readinessState
+          # 서비스가 떴고 이력 DB master 에 붙어 있는지 본다(masterDb, MasterDbHealthConfig). 자동 db 는 replica 까지 보므로 넣지 않는다 —
+          # 레플리카가 늦거나 죽어도 서비스가 빠지면 안 된다. GitHub·Argo CD·API 서버는 요청 때 부르는 외부 의존이라 readiness 조건이 아니다.
+          include: readinessState, masterDb
         liveness:
           include: livenessState
   metrics:

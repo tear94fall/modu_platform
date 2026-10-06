@@ -3,6 +3,24 @@
 #   지금은 개발자 gh CLI 토큰을 {cipher} 로 넣어 둔 것 — 운영 전엔 modu_infra contents:write + read:packages 만 가진 fine-grained PAT 로 바꾼다.
 # - argocd.token: Argo CD 로컬 계정 deploy(role:deployer — applications get/sync 만, modu_infra k8s/cicd/argocd)의 API 키.
 # - services: 배포 탭에 보이는 서비스. image 는 modu_infra overlays/dev/kustomization.yaml 의 images[].name, name 은 k8s Deployment 이름과 같아야 한다.
+spring:
+  # 배포 이력 DB(modu-platform.deployment, 2026-10-07). JPA RW/RO 분리 — master(mysql-platform)는 쓰기와 진행률 조회(get/update·재시작 복구),
+  # replica(mysql-platform-replica)는 이력 목록·서비스 표(list/latest/latestSucceeded/size). 복제 지연 때문에 진행률은 master 에서만 읽는다.
+  # 계정 platform 의 비밀번호 = Secret infra PLATFORM_DB_USER_PASSWORD, platform_ro = 읽기 전용 계정(replica). 스키마는 DBA 소유
+  # (modu_infra data/mysql/schema/platform.modu-platform.sql) — 앱은 master 만 validate 하고 replica 는 검사하지 않는다(hbm2ddl none).
+  datasource:
+    master:
+      url: jdbc:mysql://mysql-platform:3306/modu-platform?useSSL=false&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      username: platform
+      password: '{cipher}77c4f3aea9a3109c3c8b5cbdf133ef8006bfa1bcf7ff65c7758db6eeca9e75525d1cddc1da43094b2c5e400cd059d9b0b739e7c5ee9c88ac9890040937e8f29b'
+    replica:
+      url: jdbc:mysql://mysql-platform-replica:3306/modu-platform?useSSL=false&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      username: platform_ro
+      password: '{cipher}9a1f49db9630e0ca7f0b2c3a124c769240047cf0acda9c7deefe84cc2663dd79fbbadd482dd184f3d204dc1cdeca0f1e905d78b1aaf1082edeb4b9a883dcfbf1'
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
 deploy:
   github:
     api-url: https://api.github.com
@@ -18,6 +36,8 @@ deploy:
     token: '{cipher}7489d10d748ed555de06b4e431b4944f5b8d54770ee372c6801a677e5c59b98da871f889b0a39d3360ae7d81afed708a3411c47348b3695cce7cb0e2570a4bffbaa8e04528896fde8a612cbb475557bfc757d845aee6ba894519a624fefd49a6374e159c755dfd95881db1f930a5059c9a246491b5a24e536067d21acbf4d9788916e9c36f4267148498bad88820865ba3f49c2a7007cdfd328d563012aa78a8c84f9c8aa490c6561227a0de3510dc2c27e1a5982194691ecb922c5b12986658320ccf6c7c4c3a768664aecce5a811b35e3504b4cf40bef2ff553b9df48d8152bce9fbc120ea7073c97ec710c00d3aeef07d47b2146d782e01040fa63f5d97ce'
   kubernetes:
     namespace: modu
+  store:
+    capacity: 500            # 목록 API 가 돌려주는 최대 건수(DB 에는 전부 남는다)
   services:
     - name: config-service
       repo: modu_platform

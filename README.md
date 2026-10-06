@@ -6,7 +6,7 @@ modu 프로젝트(modu_messenger, modu_commerce, modu_admin)가 같이 쓰는 �
 |---|---|---|
 | config-service | 8888 | Spring Cloud Config(native). `config-repo/` 를 서빙하고 `{cipher}` 값을 복호화한다. 관리 콘솔용 조회 `GET /api-admin/config-repo/files`, `/file?path=` 는 비밀값을 가려서 내려주고 게이트웨이(`/config-service/api-admin/**`, 관리자 토큰)로만 연다. |
 | gateway-service | 8000 | Spring Cloud Gateway. JWT 검증(auth-service JWKS), 서비스 라우팅(`modu.services.*` 주소), 백오피스 CORS. |
-| deploy-service | 8900 | 모두 시스템 "배포" 탭 백엔드 — GHCR 태그 조회, modu_infra `kustomization.yaml` 태그 커밋, Argo CD Sync(그 Deployment 만), 롤아웃 진행률. `/deploy-service/api-system/**`(ROLE_SYSTEM, 내부 토큰)로만 연다. 설정은 `config-repo/deploy-service.yml`(`deploy.*`), 배포 이력은 메모리(최근 50건, 재시작하면 사라짐). |
+| deploy-service | 8900 | 모두 시스템 "배포" 탭 백엔드 — GHCR 태그 조회, modu_infra `kustomization.yaml` 태그 커밋, Argo CD Sync(그 Deployment 만), 롤아웃 진행률. `/deploy-service/api-system/**`(ROLE_SYSTEM, 내부 토큰)로만 연다. 설정은 `config-repo/deploy-service.yml`(`deploy.*`, `spring.datasource.master/replica.*`). 배포 이력은 DB `modu-platform` 표 `deployment` — JPA RW/RO 분리: master `mysql-platform`(계정 `platform`)은 쓰기와 진행률 조회(`get`/`update`, 재시작 복구), replica `mysql-platform-replica`(읽기 전용 계정 `platform_ro`)는 이력 목록·서비스 표(`list`/`latest`/`latestSucceeded`/`size`). 콘솔이 배포 직후 2초마다 진행률을 폴링하므로 복제 지연이 없게 진행률은 master 에서만 읽는다. DDL 은 modu_infra `data/mysql/schema/platform.modu-platform.sql`(앱은 master 만 `ddl-auto: validate`, replica 는 검사 안 함), 재시작하면 RUNNING 이던 기록은 FAILED 로 닫힌다. readiness 는 `readinessState, masterDb`(master 만 — 레플리카가 늦거나 죽어도 빠지지 않는다). |
 
 auth-service 는 회원 데이터의 주인인 modu_messenger 에 남아 있습니다(게이트웨이는 컨테이너 이름 `auth-service` 로 JWKS 를 읽습니다).
 서비스 레지스트리(Eureka)는 2026-10-03 에 없앴습니다. 아래 "서비스 주소" 참고.
@@ -81,6 +81,7 @@ config-repo/
 | MySQL master/replica 비밀번호, RSA 서명 키, MinIO 키, Mongo URI | `messenger/messenger.yml`, `messenger/storage-service.yml`, `messenger/chat-store-service.yml`, `commerce/commerce-service.yml` | 각 서비스 |
 | Firebase 서비스 계정 키(JSON → base64) | `messenger/push-service.yml`, `commerce/commerce-service.yml` | push-service, commerce-service |
 | GitHub 토큰 `deploy.github.token`(modu_infra contents:write + read:packages), Argo CD API 토큰 `deploy.argocd.token`(applications get/sync) | `config-repo/deploy-service.yml` | deploy-service |
+| 배포 이력 DB 비밀번호 — master `spring.datasource.master.password`(mysql-platform 의 `platform` 계정, k8s Secret infra `PLATFORM_DB_USER_PASSWORD` 와 같은 값), replica `spring.datasource.replica.password`(mysql-platform-replica 의 읽기 전용 `platform_ro` 계정) | `config-repo/deploy-service.yml` | deploy-service |
 | (없음) Google 로그인 | — | ID 토큰의 aud 만 검사하므로 client secret 이 필요 없다. `modu.oauth.google.audiences`(공개 값)는 `application.yml` |
 | **부트스트랩** `ENCRYPT_KEY`(복호화 키), `INTERNAL_API_TOKEN`(config-service 의 /api-admin·/encrypt·/decrypt 보호) | `modu_platform/.env` → config-service 환경변수 | config-service 자신. config 에서 받을 수 없는 유일한 둘. k8s 에선 Secret 하나(`config-service`) |
 
