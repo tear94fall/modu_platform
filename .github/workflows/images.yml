@@ -43,13 +43,16 @@ jobs:
             gateway-service:
               - 'gateway-service/**'
               - '.github/workflows/images.yml'
+            deploy-service:
+              - 'deploy-service/**'
+              - '.github/workflows/images.yml'
       - id: pick
         env:
           EVENT: ${{ github.event_name }}
           CHANGED: ${{ steps.filter.outputs.changes }}
         run: |
           if [ "$EVENT" = "workflow_dispatch" ]; then
-            echo 'services=["config-service","gateway-service"]' >> "$GITHUB_OUTPUT"
+            echo 'services=["config-service","gateway-service","deploy-service"]' >> "$GITHUB_OUTPUT"
           else
             echo "services=$CHANGED" >> "$GITHUB_OUTPUT"
           fi

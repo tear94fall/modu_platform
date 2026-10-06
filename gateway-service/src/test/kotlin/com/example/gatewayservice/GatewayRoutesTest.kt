@@ -147,6 +147,27 @@ class GatewayRoutesTest {
     }
 
     @Test
+    fun deploySystem_routesOnlySystemPathsToDeployService() {
+        val route = firstMatch(HttpMethod.GET, "/deploy-service/api-system/deploy/services")!!
+        assertEquals("deploy-service-system", route.id)
+        assertEquals("http://localhost:12", route.uri.toString()) // ${modu.services.deploy-service}
+        assertEquals("deploy-service-system", routeId(HttpMethod.POST, "/deploy-service/api-system/deploy/services/point-service"))
+        assertEquals("deploy-service-system", routeId(HttpMethod.GET, "/deploy-service/api-system/deploy/deployments/dep-1"))
+        // 시스템 계층만 연다. 다른 계층·actuator·문서는 라우트가 없다.
+        assertNull(firstMatch(HttpMethod.GET, "/deploy-service/api-admin/deploy/services"))
+        assertNull(firstMatch(HttpMethod.GET, "/deploy-service/actuator/health"))
+        assertNull(firstMatch(HttpMethod.GET, "/deploy-service/v3/api-docs"))
+    }
+
+    @Test
+    fun deploySystem_needsASystemToken() {
+        // 토큰 없음·깨진 토큰·채팅 사용자 토큰은 401. (ROLE_SYSTEM 토큰 통과는 AuthorizationHeaderFilterTest 의 역할 검사와 같다.)
+        for (token in listOf(null, "broken", "chat-user", "commerce-user")) {
+            call(HttpMethod.GET, "/deploy-service/api-system/deploy/services", token).expectStatus().isUnauthorized
+        }
+    }
+
+    @Test
     fun commerceAdmin_routesToCommerceServiceAddress() {
         val route = firstMatch(HttpMethod.POST, "/commerce-service/api-admin/v1/products")!!
         assertEquals("commerce-service-admin", route.id)
@@ -158,7 +179,7 @@ class GatewayRoutesTest {
         // 라우트 uri 는 전부 modu.services.* 주소(테스트 설정의 localhost:N)거나 config-service 주소다. 레지스트리 스킴은 없다.
         val routes = routeLocator.routes.collectList().block()!!
         assertEquals(true, routes.isNotEmpty())
-        val allowed = (1..11).map { "http://localhost:$it" } + "http://localhost:8888"
+        val allowed = (1..12).map { "http://localhost:$it" } + "http://localhost:8888"
         for (route in routes) {
             assertEquals(true, route.uri.toString() in allowed, "${route.id} → ${route.uri}")
         }

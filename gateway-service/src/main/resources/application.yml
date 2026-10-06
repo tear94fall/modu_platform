@@ -201,6 +201,17 @@ spring:
             - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
             - RewritePath=/config-service/(?<segment>.*), /$\{segment}
 
+        # 모두 시스템의 '배포' 탭(deploy-service: GHCR 태그 조회, modu_infra 태그 커밋, Argo CD Sync, 롤아웃 진행률).
+        # 시스템 권한(ROLE_SYSTEM)을 보고 내부 토큰을 붙인다. 배포자 기록은 JWT 의 sub(X-Auth-User-Id)로 남긴다.
+        - id: deploy-service-system
+          uri: ${modu.services.deploy-service}
+          predicates:
+            - Path=/deploy-service/api-system/**
+          filters:
+            - AuthorizationHeaderFilter=ROLE_SYSTEM,modu-admin
+            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+            - RewritePath=/deploy-service/(?<segment>.*), /$\{segment}
+
         # commerce-service(별도 저장소 modu_commerce)도 modu.services 의 주소로 간다.
         # 내부 토큰 대신 commerce 가 Authorization 헤더의 JWT(aud=modu-admin, ROLE_ADMIN)를 다시 검증한다.
         - id: commerce-service-admin

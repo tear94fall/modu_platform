@@ -1,0 +1,55 @@
+server:
+  port: 8900
+  # SIGTERM 뒤 새 요청은 거절하고 처리 중인 요청은 끝까지 보낸다(롤링 배포·재시작 때 요청이 끊기지 않게).
+  shutdown: graceful
+
+spring:
+  application:
+    name: deploy-service
+
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+  config:
+    import: optional:configserver:${CONFIG_SERVER_URI:http://localhost:8888}
+
+  cloud:
+    # 설정 서버를 못 만나면 기본값으로 조용히 뜨지 않고 기동에 실패한다(k8s 가 다시 띄운다). 게이트웨이·메신저·커머스 서비스와 같은 규칙.
+    # 공통(application.yml: modu.internal-api.token, modu.services.*) + 자기 파일(deploy-service.yml: deploy.*)을 받는다.
+    # deploy.* 는 여기 기본값이 없다 — GitHub·Argo CD 토큰({cipher})과 서비스 목록은 config-repo/deploy-service.yml 이 유일한 출처.
+    config:
+      fail-fast: true
+
+# modu.internal-api.token 은 config-repo 의 application.yml 이 내려준다. 여기 기본값을 두지 않는다 —
+# 비어 있으면 InternalTokenFilter 가 기동을 거부한다(빈 토큰은 누구나 통과시키므로).
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  endpoint:
+    health:
+      # /actuator/health/liveness, /actuator/health/readiness (쿠버네티스 probe 용)
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          # 서비스가 떴는지만 본다. GitHub·Argo CD·API 서버는 요청 때 부르는 외부 의존이라 readiness 조건이 아니다.
+          include: readinessState
+        liveness:
+          include: livenessState
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_API_DOCS_ENABLED:true}
+    path: /v3/api-docs
+  default-produces-media-type: application/json
+  paths-to-exclude: /actuator/**, /error

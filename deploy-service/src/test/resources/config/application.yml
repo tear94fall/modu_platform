@@ -1,0 +1,35 @@
+# 테스트는 설정 서버 없이 뜬다. main 의 fail-fast 때문에 여기서 config 클라이언트를 끈다.
+# classpath:/config/application.yml 은 main 의 application.yml 을 가리지 않고 그 위에 덧붙는다.
+spring:
+  cloud:
+    config:
+      enabled: false
+
+modu:
+  internal-api:
+    token: test-token
+  services:
+    member-service: http://localhost:12
+
+# 실제로는 config-repo/deploy-service.yml 이 내려주는 값. 테스트는 네트워크·클러스터 없이 돌고 외부 게이트웨이는 mock 으로 바꾼다.
+deploy:
+  github:
+    api-url: http://localhost:1
+    owner: tear94fall
+    infra-repo: modu_infra
+    infra-branch: main
+    kustomization-path: k8s/overlays/dev/kustomization.yaml
+    token: test-github-token
+  argocd:
+    url: http://localhost:2
+    application: modu-dev
+    token: test-argocd-token
+  kubernetes:
+    namespace: modu
+  services:
+    - name: point-service
+      repo: modu_chat
+      image: ghcr.io/tear94fall/modu-chat/point-service
+    - name: gateway-service
+      repo: modu_platform
+      image: ghcr.io/tear94fall/modu-platform/gateway-service
