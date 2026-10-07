@@ -3,6 +3,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     kotlin("jvm") version "2.1.10"
     kotlin("plugin.spring") version "2.1.10"
+    // JPA 엔티티(DeploymentEntity)의 기본 생성자·open 클래스
+    kotlin("plugin.jpa") version "2.1.10"
     id("org.springframework.boot") version "3.4.2"
     id("io.spring.dependency-management") version "1.1.7"
 }
@@ -26,6 +28,9 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.cloud:spring-cloud-starter-config")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
+    // 배포 이력 저장(mysql-platform 의 modu-platform.deployment). 스키마는 DBA/인프라(modu_infra data/mysql/schema)가 만들고 앱은 validate 만 한다.
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+    runtimeOnly("com.mysql:mysql-connector-j")
     implementation("io.micrometer:micrometer-registry-prometheus")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
@@ -41,6 +46,8 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
+    // 테스트 DB(H2, MODE=MySQL) — src/test/resources/config/application.yml
+    testRuntimeOnly("com.h2database:h2")
 }
 
 // Spring Cloud BOM(2024.0.0)이 fabric8 api/model 을 6.13.4 로 끌어내려 client(7.9.0)와 어긋난다(기동 때 NoClassDefFoundError
@@ -56,6 +63,13 @@ dependencyManagement {
     imports {
         mavenBom("org.springframework.cloud:spring-cloud-dependencies:${property("springCloudVersion")}")
     }
+}
+
+// JPA 엔티티는 Hibernate 프록시 생성을 위해 open 이어야 한다(modu_chat 서비스와 같은 규칙).
+allOpen {
+    annotation("jakarta.persistence.Entity")
+    annotation("jakarta.persistence.MappedSuperclass")
+    annotation("jakarta.persistence.Embeddable")
 }
 
 kotlin {

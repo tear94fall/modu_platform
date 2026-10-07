@@ -5,6 +5,25 @@ spring:
     config:
       enabled: false
 
+  # 배포 이력 DB 는 H2(MySQL 모드). 실제로는 config-repo/deploy-service.yml 이 master(mysql-platform)·replica(mysql-platform-replica) 주소를
+  # 내려주고 ddl-auto 는 validate. 테스트는 master·replica 가 같은 H2 DB 를 본다(복제 대신) — 다른 URL 이면 replica 가 비어 목록이 안 보인다.
+  # ddl-auto: update 는 RW 에만 적용되고(RO 는 hbm2ddl none) 엔티티에서 표를 만든다.
+  datasource:
+    master:
+      url: jdbc:h2:mem:deploy;MODE=MySQL;DB_CLOSE_DELAY=-1
+      username: sa
+      password:
+      driver-class-name: org.h2.Driver
+    replica:
+      url: jdbc:h2:mem:deploy;MODE=MySQL;DB_CLOSE_DELAY=-1
+      username: sa
+      password:
+      driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
 modu:
   internal-api:
     token: test-token

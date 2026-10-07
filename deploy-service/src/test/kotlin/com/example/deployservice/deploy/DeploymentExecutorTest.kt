@@ -114,7 +114,7 @@ class DeploymentExecutorTest {
         |""".trimMargin()
 
     private val clock = MutableClock()
-    private val store = DeploymentStore()
+    private val store = InMemoryDeploymentStore()
     private val github = FakeGitHub(kustomization)
     private val argo = FakeArgo()
     private val k8s = FakeKubernetes()
@@ -333,6 +333,48 @@ class DeploymentExecutorTest {
         val r = store.get("dep-1")!!
         assertEquals(DeploymentStatus.FAILED, r.status)
         assertEquals("Deployment point-service 가 네임스페이스 modu 에 없습니다.", r.error)
+    }
+
+    @Test
+    fun `a store write failure during rollout marks the deployment FAILED instead of killing the run`() {
+        start()
+        succeedArgoAfter(0)
+        k8s.snapshots += snapshot(desired = 2, updated = 2, ready = 1, available = 1, replicas = 2)
+        k8s.snapshots += snapshot(desired = 2, updated = 2, ready = 2, available = 2, replicas = 2)
+        // 롤아웃 스냅샷을 쓰는 첫 UPDATE 만 실패하는 저장소(DB 순단). 그 뒤(FAILED 기록)는 다시 된다.
+        var failures = 0
+        val flaky = object : DeploymentStore by store {
+            override fun update(id: String, update: (DeploymentRecord) -> DeploymentRecord): DeploymentRecord? {
+                val current = store.get(id) ?: return null
+                if (update(current).rollout != null && current.rollout == null && failures++ == 0) throw IllegalStateException("Connection refused")
+                return store.update(id, update)
+            }
+        }
+        val executor = DeploymentExecutor(props, github, argo, k8s, flaky, clock, { clock.advance(it) }, timeouts)
+
+        executor.run("dep-1")
+
+        val r = store.get("dep-1")!!
+        assertEquals(DeploymentStatus.FAILED, r.status)
+        assertEquals(Step.ROLLOUT, r.step)
+        assertEquals("배포 기록 저장 실패(DB): Connection refused", r.error)
+        assertEquals(StepStatus.FAILED, r.steps[2].status)
+        assertNotNull(r.finishedAt)
+        assertEquals(1, failures)
+    }
+
+    @Test
+    fun `a dead store does not throw out of run`() {
+        start()
+        val dead = object : DeploymentStore by store {
+            override fun update(id: String, update: (DeploymentRecord) -> DeploymentRecord): DeploymentRecord? = throw IllegalStateException("db down")
+        }
+        val executor = DeploymentExecutor(props, github, argo, k8s, dead, clock, { clock.advance(it) }, timeouts)
+
+        executor.run("dep-1") // 던지지 않는다(로그만). 기록은 RUNNING 으로 남고 재시작 복구가 닫는다.
+
+        assertEquals(DeploymentStatus.RUNNING, store.get("dep-1")!!.status)
+        assertTrue(github.puts.isEmpty())
     }
 
     @Test

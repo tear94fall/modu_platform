@@ -5,14 +5,15 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import java.time.Instant
 
-class DeploymentStoreTest {
+/** 실행기·러너 단위 테스트가 쓰는 메모리 저장소. 운영 저장소(DB)는 JpaDeploymentStoreTest. */
+class InMemoryDeploymentStoreTest {
 
     private fun record(id: String, service: String = "point-service", status: DeploymentStatus = DeploymentStatus.RUNNING, previous: String? = null) =
         DeploymentRecord(id = id, service = service, tag = "develop-$id", previousTag = previous, by = "me", startedAt = Instant.EPOCH, status = status)
 
     @Test
     fun `keeps the newest 50 and lists newest first`() {
-        val store = DeploymentStore()
+        val store = InMemoryDeploymentStore()
         (1..60).forEach { store.add(record("%07d".format(it))) }
 
         assertEquals(50, store.size())
@@ -24,7 +25,7 @@ class DeploymentStoreTest {
 
     @Test
     fun `filters by service and finds the last succeeded`() {
-        val store = DeploymentStore()
+        val store = InMemoryDeploymentStore()
         store.add(record("a", status = DeploymentStatus.SUCCEEDED, previous = "develop-0000001"))
         store.add(record("b", service = "gateway-service", status = DeploymentStatus.SUCCEEDED, previous = "develop-0000002"))
         store.add(record("c", status = DeploymentStatus.FAILED, previous = "develop-0000003"))
@@ -38,7 +39,7 @@ class DeploymentStoreTest {
 
     @Test
     fun `update replaces the record in place`() {
-        val store = DeploymentStore()
+        val store = InMemoryDeploymentStore()
         store.add(record("a"))
 
         val updated = store.update("a") { it.copy(percent = 42).withStep(Step.SYNC) { s -> s.copy(status = StepStatus.RUNNING) } }

@@ -167,7 +167,7 @@ class DefaultDeployService(
         store.get(id) ?: throw ApiException.notFound("deployment_not_found", "배포 기록이 없습니다: $id")
 
     override fun deployments(service: String?, limit: Int): DeploymentsResponse =
-        DeploymentsResponse(store.list(service?.takeIf { it.isNotBlank() }, limit.coerceIn(1, DeploymentStore.DEFAULT_CAPACITY)))
+        DeploymentsResponse(store.list(service?.takeIf { it.isNotBlank() }, limit.coerceIn(1, properties.store.capacity.coerceAtLeast(1))))
 
     // ---- helpers ---------------------------------------------------------------------------------------------------------
 
