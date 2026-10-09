@@ -77,7 +77,7 @@ class GitHubRestGateway(private val client: RestClient, private val owner: Strin
     private inline fun <T> call(what: String, block: () -> T): T = try {
         block()
     } catch (e: RestClientResponseException) {
-        throw UpstreamException("github", "GitHub $what 실패 (${e.statusCode.value()}): ${e.responseBodyAsString.take(200)}", e)
+        throw UpstreamException("github", "GitHub $what 실패 (${e.statusCode.value()}): ${e.responseBodyAsString.take(200)}", e, e.statusCode.value())
     } catch (e: UpstreamException) {
         throw e
     } catch (e: Exception) {
