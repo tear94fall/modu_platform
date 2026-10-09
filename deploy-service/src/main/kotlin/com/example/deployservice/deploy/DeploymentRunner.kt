@@ -1,6 +1,7 @@
 package com.example.deployservice.deploy
 
 import com.example.deployservice.api.ApiException
+import com.example.deployservice.deploy.lock.PessimisticLockTimeoutException
 import jakarta.annotation.PreDestroy
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
@@ -11,7 +12,9 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * 배포를 백그라운드로 돌린다. 서비스 이름마다 동시에 하나만 — 같은 서비스에 두 번째 요청이 오면 409 deploy_in_progress.
- * 서로 다른 서비스는 나란히 돈다(스레드 풀은 필요한 만큼 늘고 놀면 줄어든다).
+ * 그 판단은 저장소([DeploymentStore.addIfNoneRunning], 운영은 DB 비관적 잠금 + master 의 RUNNING 확인)가 한다 — 파드가 둘 이상이어도(롤링 배포 중,
+ * replicas > 1) 지켜진다. [running] 은 이 파드가 돌리는 작업의 기록일 뿐 판단에 쓰지 않는다.
+ * 서로 다른 서비스는 나란히 돈다(스레드 풀은 필요한 만큼 늘고 놀면 줄어든다). 인프라 커밋 구간만 [InfraCommitLock] 으로 하나씩.
  */
 class DeploymentRunner(
     private val store: DeploymentStore,
@@ -20,7 +23,6 @@ class DeploymentRunner(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val running = ConcurrentHashMap<String, Future<*>>()
-    private val lock = Any()
 
     companion object {
         fun defaultPool(): ExecutorService {
@@ -32,12 +34,14 @@ class DeploymentRunner(
     }
 
     /** [record] 를 저장하고 실행을 예약한다. 그 서비스가 이미 배포 중이면 [ApiException] 409. */
-    fun start(record: DeploymentRecord): DeploymentRecord = synchronized(lock) {
-        val current = running[record.service]
-        if (current != null && !current.isDone) {
-            throw ApiException.conflict("deploy_in_progress", "${record.service} 는 이미 배포 중입니다.")
+    fun start(record: DeploymentRecord): DeploymentRecord {
+        val added = try {
+            store.addIfNoneRunning(record)
+        } catch (e: PessimisticLockTimeoutException) {
+            log.warn("deployment {} {}: service lock busy: {}", record.id, record.service, e.message)
+            false
         }
-        store.add(record)
+        if (!added) throw ApiException.conflict("deploy_in_progress", "${record.service} 는 이미 배포 중입니다.")
         running[record.service] = pool.submit {
             try {
                 executor.run(record.id)
@@ -46,10 +50,11 @@ class DeploymentRunner(
             }
         }
         log.info("deployment {} {} → {} by {} started", record.id, record.service, record.tag, record.by)
-        record
+        return record
     }
 
-    fun isRunning(service: String): Boolean = running[service]?.let { !it.isDone } ?: false
+    /** 이 파드에서 [service] 배포 스레드가 도는가(로컬 기록. 서비스당 하나 규칙은 [DeploymentStore.hasRunning]). */
+    fun isRunningLocally(service: String): Boolean = running[service]?.let { !it.isDone } ?: false
 
     @PreDestroy
     fun shutdown() {

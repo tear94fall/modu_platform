@@ -1,6 +1,8 @@
 package com.example.deployservice.deploy
 
+import com.example.deployservice.api.UpstreamException
 import com.example.deployservice.config.DeployProperties
+import com.example.deployservice.deploy.lock.PessimisticLockTimeoutException
 import com.example.deployservice.gateway.ArgoCdGateway
 import com.example.deployservice.gateway.ArgoResource
 import com.example.deployservice.gateway.GitHubGateway
@@ -46,11 +48,16 @@ class DeploymentExecutor(
     private val clock: Clock = Clock.systemUTC(),
     private val sleeper: Sleeper = Sleeper.REAL,
     private val timeouts: Timeouts = Timeouts(),
+    private val commitLock: InfraCommitLock = InfraCommitLock.NONE,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     companion object {
         val FAILING_POD_REASONS = setOf("CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull")
+
+        /** GitHub contents PUT 이 sha 가 낡았을 때 돌려주는 상태(409 Conflict, 때로 422). */
+        val SHA_CONFLICT_STATUSES = setOf(409, 422)
+        const val MAX_SHA_CONFLICT_RETRIES = 2
     }
 
     fun run(id: String) {
@@ -80,33 +87,67 @@ class DeploymentExecutor(
 
     // ---- 1. COMMIT -------------------------------------------------------------------------------------------------------
 
-    /** kustomization.yaml 의 newTag 를 바꿔 커밋하고 Sync 에 쓸 revision 을 돌려준다. */
+    private data class CommitResult(val revision: String, val commit: CommitView?, val message: String)
+
+    /**
+     * kustomization.yaml 의 newTag 를 바꿔 커밋하고 Sync 에 쓸 revision 을 돌려준다.
+     * 읽기(sha) → 고치기 → PUT 은 [commitLock](운영: DB 잠금 `deploy:infra-commit`) 안에서 — 다른 서비스 배포와 같은 파일을 겹쳐 고치지 않게.
+     * 배포 기록 쓰기는 잠금 밖에서 한다(잠금 트랜잭션에 묶이면 커밋될 때까지 콘솔이 진행률을 못 본다).
+     */
     private fun commit(record: DeploymentRecord, spec: DeployProperties.ServiceSpec): String {
         val id = record.id
         startStep(id, Step.COMMIT, Progress.COMMIT_START)
-        val gh = properties.github
-        val file = runCatching { github.getFile(gh.infraRepo, gh.infraBranch, gh.kustomizationPath) }
-            .getOrElse { throw DeployFailure("kustomization.yaml 읽기 실패: ${it.message}", it) }
-
-        val previousTag = Kustomization.currentTag(file.content, spec.image) ?: "develop"
-        write(id) { it.copy(previousTag = previousTag) }
-
-        if (previousTag == record.tag) {
-            val head = runCatching { github.branchHead(gh.infraRepo, gh.infraBranch) }
-                .getOrElse { throw DeployFailure("브랜치 HEAD 조회 실패: ${it.message}", it) }
-            finishStep(id, Step.COMMIT, Progress.COMMIT_DONE, "이미 같은 태그")
-            return head.sha
+        var previousTag: String? = null
+        val result = try {
+            commitLock.withLock { commitUnderLock(record, spec) { previousTag = it } }
+        } catch (e: PessimisticLockTimeoutException) {
+            throw DeployFailure("인프라 커밋 잠금을 얻지 못했습니다(다른 배포가 커밋 중). 잠시 뒤 다시 시도하세요.", e)
+        } catch (e: Exception) {
+            previousTag?.let { p -> runCatching { store.update(id) { it.copy(previousTag = p) } } }
+            throw e
         }
-
-        val updated = runCatching { Kustomization.replaceTag(file.content, spec.image, record.tag) }
-            .getOrElse { throw DeployFailure(it.message ?: "kustomization.yaml 수정 실패", it) }
-        val message = "deploy: ${spec.name} → ${record.tag} (by ${record.by})"
-        val commit = runCatching { github.putFile(gh.infraRepo, gh.infraBranch, gh.kustomizationPath, updated, file.sha, message) }
-            .getOrElse { throw DeployFailure("커밋 실패: ${it.message}", it) }
-        write(id) { it.copy(commit = CommitView(commit.sha, commit.htmlUrl)) }
-        finishStep(id, Step.COMMIT, Progress.COMMIT_DONE, "커밋 ${commit.sha.take(7)}")
-        return commit.sha
+        previousTag?.let { p -> write(id) { it.copy(previousTag = p) } }
+        result.commit?.let { c -> write(id) { it.copy(commit = c) } }
+        finishStep(id, Step.COMMIT, Progress.COMMIT_DONE, result.message)
+        return result.revision
     }
+
+    /** 잠금 안: 읽고 고쳐 PUT. sha 충돌(409/422 — 그사이 누가 파일을 고쳤다)이면 다시 읽어 [MAX_SHA_CONFLICT_RETRIES] 번까지 되풀이한다. */
+    private fun commitUnderLock(record: DeploymentRecord, spec: DeployProperties.ServiceSpec, onPreviousTag: (String) -> Unit): CommitResult {
+        val gh = properties.github
+        var conflicts = 0
+        while (true) {
+            val file = runCatching { github.getFile(gh.infraRepo, gh.infraBranch, gh.kustomizationPath) }
+                .getOrElse { throw DeployFailure("kustomization.yaml 읽기 실패: ${it.message}", it) }
+
+            val previousTag = Kustomization.currentTag(file.content, spec.image) ?: "develop"
+            onPreviousTag(previousTag)
+
+            if (previousTag == record.tag) {
+                val head = runCatching { github.branchHead(gh.infraRepo, gh.infraBranch) }
+                    .getOrElse { throw DeployFailure("브랜치 HEAD 조회 실패: ${it.message}", it) }
+                return CommitResult(head.sha, null, "이미 같은 태그")
+            }
+
+            val updated = runCatching { Kustomization.replaceTag(file.content, spec.image, record.tag) }
+                .getOrElse { throw DeployFailure(it.message ?: "kustomization.yaml 수정 실패", it) }
+            val message = "deploy: ${spec.name} → ${record.tag} (by ${record.by})"
+            try {
+                val commit = github.putFile(gh.infraRepo, gh.infraBranch, gh.kustomizationPath, updated, file.sha, message)
+                val note = if (conflicts > 0) " (sha 충돌로 ${conflicts}번 다시 시도)" else ""
+                return CommitResult(commit.sha, CommitView(commit.sha, commit.htmlUrl), "커밋 ${commit.sha.take(7)}$note")
+            } catch (e: Exception) {
+                if (isShaConflict(e) && conflicts < MAX_SHA_CONFLICT_RETRIES) {
+                    conflicts++
+                    log.warn("deployment {} commit sha conflict ({}), re-reading and retrying {}/{}", record.id, e.message, conflicts, MAX_SHA_CONFLICT_RETRIES)
+                    continue
+                }
+                throw DeployFailure("커밋 실패: ${e.message}", e)
+            }
+        }
+    }
+
+    private fun isShaConflict(e: Exception): Boolean = e is UpstreamException && e.httpStatus in SHA_CONFLICT_STATUSES
 
     // ---- 2. SYNC ---------------------------------------------------------------------------------------------------------
 
@@ -216,6 +257,9 @@ class DeploymentExecutor(
         val at = now()
         try {
             store.update(id) {
+                // 이미 닫힌 기록은 건드리지 않는다 — 자기 자신(deploy-service) 배포 중 새 파드의 StaleDeploymentRecovery 가 SUCCEEDED 로 닫은 뒤
+                // 옛 파드가 종료되며(스레드 인터럽트) 실패를 덮어쓰지 않게.
+                if (it.status != DeploymentStatus.RUNNING) return@update it
                 it.copy(status = DeploymentStatus.FAILED, error = error, finishedAt = at)
                     .withStep(step) { s -> s.copy(status = StepStatus.FAILED, message = error, startedAt = s.startedAt ?: at, finishedAt = at) }
             }

@@ -21,8 +21,11 @@ class ApiException(val status: HttpStatus, val error: String, message: String) :
     }
 }
 
-/** GitHub·Argo CD·API 서버 호출이 실패했다. [system] 은 오류 코드에 들어간다(github_error, argocd_error, kubernetes_error). */
-class UpstreamException(val system: String, message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+/**
+ * GitHub·Argo CD·API 서버 호출이 실패했다. [system] 은 오류 코드에 들어간다(github_error, argocd_error, kubernetes_error).
+ * [httpStatus] 는 상대가 HTTP 오류로 답했을 때 그 상태 코드(연결 실패 등은 null) — 예: GitHub contents PUT 의 sha 충돌(409/422) 재시도 판단.
+ */
+class UpstreamException(val system: String, message: String, cause: Throwable? = null, val httpStatus: Int? = null) : RuntimeException(message, cause)
 
 @RestControllerAdvice
 class ApiExceptionHandler {

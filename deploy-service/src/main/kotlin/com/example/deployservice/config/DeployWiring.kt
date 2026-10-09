@@ -8,6 +8,7 @@ import com.example.deployservice.deploy.DeployService
 import com.example.deployservice.deploy.DeploymentExecutor
 import com.example.deployservice.deploy.DeploymentRunner
 import com.example.deployservice.deploy.DeploymentStore
+import com.example.deployservice.deploy.InfraCommitLock
 import com.example.deployservice.gateway.ArgoCdGateway
 import com.example.deployservice.gateway.ArgoCdRestGateway
 import com.example.deployservice.gateway.Fabric8KubernetesGateway
@@ -74,7 +75,8 @@ class DeployWiring {
         kubernetes: KubernetesGateway,
         store: DeploymentStore,
         clock: Clock,
-    ): DeploymentExecutor = DeploymentExecutor(properties, github, argo, kubernetes, store, clock)
+        commitLock: InfraCommitLock,
+    ): DeploymentExecutor = DeploymentExecutor(properties, github, argo, kubernetes, store, clock, commitLock = commitLock)
 
     @Bean
     fun deploymentRunner(store: DeploymentStore, executor: DeploymentExecutor): DeploymentRunner = DeploymentRunner(store, executor)

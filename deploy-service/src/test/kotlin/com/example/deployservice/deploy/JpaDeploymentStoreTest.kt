@@ -9,7 +9,11 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import com.example.deployservice.config.RoJpaConfig
 import com.example.deployservice.config.RwJpaConfig
+import com.example.deployservice.deploy.lock.PessimisticLock
 import com.example.deployservice.deploy.ro.DeploymentRoRepository
+import com.example.deployservice.gateway.DeploymentSnapshot
+import com.example.deployservice.gateway.KubernetesGateway
+import com.example.deployservice.gateway.PodSnapshot
 import com.example.deployservice.deploy.rw.DeploymentRwRepository
 import org.springframework.data.domain.PageRequest
 import org.springframework.transaction.annotation.Propagation
@@ -38,17 +42,21 @@ import java.time.ZoneOffset
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import(
     RwJpaConfig::class, RoJpaConfig::class, JacksonAutoConfiguration::class, DeployPropertiesConfig::class,
-    JpaDeploymentStore::class, StaleDeploymentRecovery::class, JpaDeploymentStoreTest.ClockConfig::class,
+    JpaDeploymentStore::class, StaleDeploymentRecovery::class, PessimisticLock::class, JpaDeploymentStoreTest.ClockConfig::class,
 )
 class JpaDeploymentStoreTest(
     @Autowired private val store: JpaDeploymentStore,
     @Autowired private val repository: DeploymentRwRepository,
     @Autowired private val roRepository: DeploymentRoRepository,
     @Autowired private val recovery: StaleDeploymentRecovery,
+    @Autowired private val kubernetes: MapKubernetes,
 ) {
 
     @AfterEach
-    fun clean() = repository.deleteAllInBatch()
+    fun clean() {
+        repository.deleteAllInBatch()
+        kubernetes.deployments.clear()
+    }
 
     @Test
     fun `RW and RO repositories are separate persistence units`() {
@@ -62,6 +70,9 @@ class JpaDeploymentStoreTest(
     class ClockConfig {
         @Bean
         fun clock(): Clock = Clock.fixed(Instant.parse("2026-10-07T09:00:00Z"), ZoneOffset.UTC)
+
+        @Bean
+        fun kubernetes(): MapKubernetes = MapKubernetes()
     }
 
     private val t0 = Instant.parse("2026-10-07T08:00:00.123456Z")
@@ -190,4 +201,59 @@ class JpaDeploymentStoreTest(
         assertNull(store.get("failed")!!.error)
         assertTrue(repository.findByStatus("RUNNING").isEmpty())
     }
+
+    @Test
+    fun `startup confirms a self-deploy of deploy-service whose tag is running and fails other stale rows`() {
+        // deploy-service 자기 배포: 새 파드가 뜨는 중(아직 롤아웃 미완) 이미지 태그는 기록과 같다 → SUCCEEDED
+        store.add(record("self", service = "deploy-service", minute = 1))
+        store.update("self") { it.copy(step = Step.ROLLOUT, percent = 50).withStep(Step.COMMIT) { s -> s.copy(status = StepStatus.SUCCEEDED, message = "커밋 c0ffee1") }.withStep(Step.SYNC) { s -> s.copy(status = StepStatus.SUCCEEDED) }.withStep(Step.ROLLOUT) { s -> s.copy(status = StepStatus.RUNNING) } }
+        kubernetes.deployments["deploy-service"] = snapshot("deploy-service", tag = "develop-self", rolledOut = false)
+        // 다른 서비스, 태그 다름 → FAILED
+        store.add(record("other", service = "point-service", minute = 2))
+        kubernetes.deployments["point-service"] = snapshot("point-service", tag = "develop-35db83f", rolledOut = true)
+        // 다른 서비스, 태그가 같고 롤아웃 완료 → SUCCEEDED
+        store.add(record("done-elsewhere", service = "gateway-service", minute = 3))
+        kubernetes.deployments["gateway-service"] = snapshot("gateway-service", tag = "develop-done-elsewhere", rolledOut = true)
+        // 다른 서비스, 태그는 같지만 롤아웃 중 → FAILED
+        store.add(record("rolling", service = "schedule-service", minute = 4))
+        kubernetes.deployments["schedule-service"] = snapshot("schedule-service", tag = "develop-rolling", rolledOut = false)
+
+        recovery.run(DefaultApplicationArguments())
+
+        val self = store.get("self")!!
+        assertEquals(DeploymentStatus.SUCCEEDED, self.status)
+        assertEquals(Step.DONE, self.step)
+        assertEquals(100, self.percent)
+        assertNull(self.error)
+        assertEquals(Instant.parse("2026-10-07T09:00:00Z"), self.finishedAt)
+        assertEquals(listOf(StepStatus.SUCCEEDED, StepStatus.SUCCEEDED, StepStatus.SUCCEEDED), self.steps.map { it.status })
+        assertEquals("커밋 c0ffee1", self.steps[0].message)
+        assertEquals(StaleDeploymentRecovery.CONFIRMED, self.steps[2].message)
+
+        assertEquals(DeploymentStatus.FAILED, store.get("other")!!.status)
+        assertEquals(StaleDeploymentRecovery.MESSAGE, store.get("other")!!.error)
+        assertEquals(DeploymentStatus.SUCCEEDED, store.get("done-elsewhere")!!.status)
+        assertEquals(DeploymentStatus.FAILED, store.get("rolling")!!.status)
+        assertTrue(repository.findByStatus("RUNNING").isEmpty())
+    }
+
+    @Test
+    fun `startup fails a self-deploy whose tag is not the running one`() {
+        store.add(record("self", service = "deploy-service"))
+        kubernetes.deployments["deploy-service"] = snapshot("deploy-service", tag = "develop-35db83f", rolledOut = true)
+
+        recovery.run(DefaultApplicationArguments())
+
+        assertEquals(DeploymentStatus.FAILED, store.get("self")!!.status)
+    }
+
+    private fun snapshot(name: String, tag: String, rolledOut: Boolean) =
+        DeploymentSnapshot(name, 2, 2, 1, if (rolledOut) 1 else 2, 1, if (rolledOut) 1 else 0, if (rolledOut) 1 else 0, tag, "True", "True")
+}
+
+/** 이름별 Deployment 스냅샷(없으면 null). */
+class MapKubernetes : KubernetesGateway {
+    val deployments = java.util.concurrent.ConcurrentHashMap<String, DeploymentSnapshot>()
+    override fun deployment(name: String): DeploymentSnapshot? = deployments[name]
+    override fun pods(deploymentName: String): List<PodSnapshot> = emptyList()
 }

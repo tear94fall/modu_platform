@@ -17,4 +17,7 @@ interface DeploymentRwRepository : RwRepository<DeploymentEntity, String> {
 
     /** 재시작 복구용(idx_deployment_status). master 에서 읽어야 방금 RUNNING 으로 남은 행을 놓치지 않는다. */
     fun findByStatus(status: String): List<DeploymentEntity>
+
+    /** 서비스당 RUNNING 하나 규칙(배포 시작 때 서비스 비관적 잠금 안에서). master 에서 읽어야 방금 시작한 배포를 본다. */
+    fun existsByServiceAndStatus(service: String, status: String): Boolean
 }

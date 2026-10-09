@@ -1,12 +1,14 @@
 package com.example.deployservice.deploy
 
 import com.example.deployservice.config.DeployProperties
+import com.example.deployservice.deploy.lock.PessimisticLock
 import com.example.deployservice.deploy.ro.DeploymentRoRepository
 import com.example.deployservice.deploy.rw.DeploymentRwRepository
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Component
+import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
 
 /**
@@ -18,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional
  * | 메서드 | DB | 이유 |
  * |---|---|---|
  * | [add], [update] | master([DeploymentRwRepository]) | 쓰기. update 는 FOR UPDATE 로 잠그고 읽는다 |
+ * | [addIfNoneRunning], [hasRunning] | master | 서비스당 RUNNING 하나 — 비관적 잠금 + master 확인(복제 지연이 있으면 방금 시작한 배포를 못 본다) |
  * | [get] | master | 진행률 경로 — 콘솔이 배포 직후 2초마다 한 건을 폴링한다. 복제 지연이 있으면 방금 쓴 진행률이 안 보이거나(404) 뒤로 간다 |
  * | 재시작 복구([StaleDeploymentRecovery]) | master | 방금 RUNNING 으로 남은 행을 놓치면 안 된다 |
  * | [list], [latest], [latestSucceeded], [size] | replica([DeploymentRoRepository]) | 이력 페이지·서비스 표. 몇 초 늦어도 되고 master 부하를 덜어 준다 |
@@ -31,6 +34,7 @@ class JpaDeploymentStore(
     private val ro: DeploymentRoRepository,
     private val objectMapper: ObjectMapper,
     properties: DeployProperties,
+    private val pessimisticLock: PessimisticLock,
 ) : DeploymentStore {
 
     private val maxList = properties.store.capacity.coerceIn(1, DeploymentStore.MAX_LIST)
@@ -41,6 +45,34 @@ class JpaDeploymentStore(
     override fun add(record: DeploymentRecord) {
         rw.save(toEntity(record))
     }
+
+    /**
+     * 배포 시작. 같은 서비스는 파드가 달라도 RUNNING 기록이 하나만 생긴다.
+     *
+     * 실행 순서
+     * 1. 트랜잭션을 연다(READ COMMITTED).
+     * 2. `deploy:service:<이름>` 행을 잠근다. 같은 서비스의 다른 요청은 여기서 기다린다.
+     * 3. 그 서비스의 RUNNING 기록이 있는지 master 에서 확인한다. 있으면 false.
+     * 4. 없으면 새 RUNNING 기록을 넣고 커밋한다. 커밋하면 잠금이 풀린다.
+     *
+     * READ COMMITTED 인 이유: MySQL 기본값(REPEATABLE READ)은 트랜잭션의 첫 조회 시점 데이터를 계속 보여 준다.
+     * 그러면 3번이 앞 요청이 방금 넣은 RUNNING 을 못 보고 하나 더 넣는다. READ COMMITTED 는 항상 최신 커밋을 본다.
+     *
+     * 잠금 대기를 넘기면 PessimisticLockTimeoutException 으로 롤백되고, 러너가 409 로 바꾼다.
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    override fun addIfNoneRunning(record: DeploymentRecord): Boolean =
+        pessimisticLock.withLock(serviceLockName(record.service)) {
+            if (rw.existsByServiceAndStatus(record.service, DeploymentStatus.RUNNING.name)) {
+                false
+            } else {
+                rw.save(toEntity(record))
+                true
+            }
+        }
+
+    @Transactional(readOnly = true)
+    override fun hasRunning(service: String): Boolean = rw.existsByServiceAndStatus(service, DeploymentStatus.RUNNING.name)
 
     /** master 에서 읽는다(진행률 폴링 — 복제 지연 없이 방금 쓴 값). */
     @Transactional(readOnly = true)
@@ -77,6 +109,8 @@ class JpaDeploymentStore(
 
     companion object {
         const val RO_TX = "roTransactionManager"
+
+        fun serviceLockName(service: String) = "deploy:service:$service"
     }
 
     // ---- 변환 -------------------------------------------------------------------------------------------------------------

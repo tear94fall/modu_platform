@@ -140,7 +140,8 @@ class DefaultDeployService(
         if (!Tags.isDeployable(tag)) {
             throw ApiException.badRequest("invalid_tag", "태그는 develop-<sha7> 또는 master-<sha7> 모양이어야 합니다: $tag")
         }
-        if (runner.isRunning(service)) throw ApiException.conflict("deploy_in_progress", "$service 는 이미 배포 중입니다.")
+        // 빠른 사전 확인(GHCR 조회 전에). 최종 판단은 runner.start 의 잠금 안 확인.
+        if (store.hasRunning(service)) throw ApiException.conflict("deploy_in_progress", "$service 는 이미 배포 중입니다.")
         // GHCR 에 있는 태그인지(선택 검사). GHCR 조회 자체가 실패하면 막지 않고 넘어간다 — 커밋·Sync 가 실패로 드러난다.
         runCatching { github.containerVersions(packageName(spec.image)) }
             .onSuccess { versions ->
