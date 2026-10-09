@@ -24,7 +24,7 @@ class HealthProbesTest(
 
     @Test
     fun `liveness and readiness are UP without the internal token`() {
-        // InternalTokenInterceptor 는 /api-admin/** 만 막는다. probe 는 토큰 없이 열려야 한다.
+        // ConfigServerAuthFilter 는 상태 점검만 열어 둔다. probe 는 토큰 없이 열려야 한다.
         mvc.get("/actuator/health/liveness").andExpect {
             status { isOk() }
             jsonPath("$.status") { value("UP") }
