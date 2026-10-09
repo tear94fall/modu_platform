@@ -28,7 +28,7 @@ class JpaDeploymentStoreRoutingTest {
     private val ro: DeploymentRoRepository = mock()
     private val objectMapper = jacksonObjectMapper().registerModule(JavaTimeModule()).disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
     private val properties = DeployProperties()
-    private val store = JpaDeploymentStore(rw, ro, objectMapper, properties)
+    private val store = JpaDeploymentStore(rw, ro, objectMapper, properties, mock())
 
     private val record = DeploymentRecord(id = "a", service = "point-service", tag = "develop-0000001", by = "임준섭", startedAt = Instant.parse("2026-10-07T08:00:00Z"))
     private val entity get() = store.toEntity(record)

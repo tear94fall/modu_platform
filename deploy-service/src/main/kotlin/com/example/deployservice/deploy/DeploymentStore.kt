@@ -13,6 +13,15 @@ interface DeploymentStore {
 
     fun add(record: DeploymentRecord)
 
+    /**
+     * 그 서비스에 RUNNING 기록이 없을 때만 [record] 를 넣는다(넣었으면 true). 운영(DB)은 `deployment` 표의 유니크 키
+     * `uk_deployment_running_service`(생성 열 running_service) 가 지키므로 파드가 여러 개여도 서비스마다 RUNNING 은 하나뿐이다.
+     */
+    fun addIfNoneRunning(record: DeploymentRecord): Boolean
+
+    /** 그 서비스에 RUNNING 기록이 있는가(운영은 master 에서 읽는다). */
+    fun hasRunning(service: String): Boolean
+
     fun get(id: String): DeploymentRecord?
 
     /** [id] 의 기록을 [update] 로 바꾼 결과를 넣고 돌려준다. 없으면 null. 읽기-바꾸기-쓰기가 한 단위다. */
@@ -46,6 +55,16 @@ class InMemoryDeploymentStore(private val capacity: Int = DEFAULT_CAPACITY) : De
             records[record.id] = record
             while (records.size > capacity) records.remove(records.keys.first())
         }
+    }
+
+    override fun addIfNoneRunning(record: DeploymentRecord): Boolean = synchronized(lock) {
+        if (hasRunning(record.service)) return false
+        add(record)
+        true
+    }
+
+    override fun hasRunning(service: String): Boolean = synchronized(lock) {
+        records.values.any { it.service == service && it.status == DeploymentStatus.RUNNING }
     }
 
     override fun get(id: String): DeploymentRecord? = synchronized(lock) { records[id] }

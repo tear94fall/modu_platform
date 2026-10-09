@@ -46,10 +46,27 @@ class FakeGitHub(var content: String) : GitHubGateway {
     val puts = mutableListOf<Triple<String, String, String>>() // content, sha, message
     var blobSha = "blob-1"
     var failPut: String? = null
+    /** 다음 PUT 몇 번을 sha 충돌(이 상태 코드)로 거절한다 — 그사이 누가 파일을 고친 것처럼(sha 도 바뀐다). */
+    var conflictsLeft = 0
+    var conflictStatus = 409
+    var reads = 0
 
-    override fun getFile(repo: String, branch: String, path: String) = RepoFile(blobSha, content)
+    /** 호출 순서("get"/"put"). 재시도마다 PUT 앞에 새 읽기가 있는지 보려고 적는다. */
+    val calls = mutableListOf<String>()
+
+    override fun getFile(repo: String, branch: String, path: String): RepoFile {
+        reads++
+        calls += "get"
+        return RepoFile(blobSha, content)
+    }
     override fun putFile(repo: String, branch: String, path: String, content: String, sha: String, message: String): RepoCommit {
+        calls += "put"
         failPut?.let { throw IllegalStateException(it) }
+        if (conflictsLeft > 0) {
+            conflictsLeft--
+            blobSha = "$blobSha-moved"
+            throw com.example.deployservice.api.UpstreamException("github", "GitHub 파일 커밋 실패 ($conflictStatus): sha does not match", null, conflictStatus)
+        }
         puts += Triple(content, sha, message)
         this.content = content
         blobSha = "blob-${puts.size + 1}"
@@ -318,6 +335,7 @@ class DeploymentExecutorTest {
         assertEquals(Step.COMMIT, r.step)
         assertEquals("커밋 실패: 409 Conflict", r.error)
         assertEquals("develop-35db83f", r.previousTag)
+        assertEquals(1, github.reads) // sha 충돌(UpstreamException 409/422)이 아니라 그냥 실패 — 다시 읽지 않는다
         assertTrue(argo.syncs.isEmpty())
         assertEquals(StepStatus.FAILED, r.steps[0].status)
     }
@@ -390,7 +408,7 @@ class DeploymentExecutorTest {
         val first = DeploymentRecord(id = "dep-1", service = "point-service", tag = "develop-5708871", by = "me", startedAt = clock.instant())
 
         runner.start(first)
-        assertTrue(runner.isRunning("point-service"))
+        assertTrue(runner.isRunningLocally("point-service"))
         val e = org.junit.jupiter.api.assertThrows<com.example.deployservice.api.ApiException> {
             runner.start(first.copy(id = "dep-2"))
         }
@@ -401,10 +419,63 @@ class DeploymentExecutorTest {
 
         gate.countDown()
         val deadline = System.currentTimeMillis() + 5_000
-        while (runner.isRunning("point-service") && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        while (runner.isRunningLocally("point-service") && System.currentTimeMillis() < deadline) Thread.sleep(10)
         assertEquals(DeploymentStatus.SUCCEEDED, store.get("dep-1")!!.status)
         assertEquals(DeploymentStatus.FAILED, store.get("dep-3")!!.status)
         runner.start(first.copy(id = "dep-4")) // 끝난 뒤엔 다시 받는다
         runner.shutdown()
+    }
+
+    @Test
+    fun `a sha conflict on PUT re-reads the file and retries, then the deployment continues`() {
+        start()
+        succeedArgoAfter(0)
+        k8s.snapshots += snapshot()
+        github.conflictsLeft = 1
+
+        executor.run("dep-1")
+
+        val r = store.get("dep-1")!!
+        assertEquals(DeploymentStatus.SUCCEEDED, r.status, r.error)
+        assertEquals(2, github.reads)
+        assertEquals(1, github.puts.size)
+        assertEquals("blob-1-moved", github.puts.single().second) // 다시 읽은 sha 로 PUT
+        assertEquals(listOf("get", "put", "get", "put"), github.calls) // 재시도 전에 꼭 다시 읽는다
+        assertEquals("커밋 c0ffee1 (sha 충돌로 1번 다시 시도)", r.steps[0].message)
+        assertEquals(1, argo.syncs.size)
+    }
+
+    @Test
+    fun `422 counts as a sha conflict too and the deployment fails after five attempts`() {
+        start()
+        github.conflictsLeft = 99 // 매번 충돌
+        github.conflictStatus = 422
+
+        executor.run("dep-1")
+
+        val r = store.get("dep-1")!!
+        assertEquals(DeploymentStatus.FAILED, r.status)
+        assertEquals(Step.COMMIT, r.step)
+        assertEquals(
+            "kustomization.yaml 커밋이 sha 충돌로 5번 모두 실패했습니다(다른 배포가 같은 파일을 고치고 있습니다). " +
+                "잠시 뒤 다시 시도하세요: GitHub 파일 커밋 실패 (422): sha does not match",
+            r.error,
+        )
+        assertEquals(StepStatus.FAILED, r.steps[0].status)
+        assertEquals(DeploymentExecutor.MAX_COMMIT_ATTEMPTS, github.reads) // 시도마다 다시 읽었다
+        assertEquals(List(5) { listOf("get", "put") }.flatten(), github.calls)
+        assertTrue(github.puts.isEmpty()) // 성공한 PUT 은 없다
+        assertTrue(argo.syncs.isEmpty())
+    }
+
+    @Test
+    fun `a failure after the record was already closed does not overwrite it`() {
+        start()
+        store.update("dep-1") { it.copy(status = DeploymentStatus.SUCCEEDED, step = Step.DONE, percent = 100) }
+        github.failPut = "boom"
+
+        executor.run("dep-1")
+
+        assertEquals(DeploymentStatus.SUCCEEDED, store.get("dep-1")!!.status)
     }
 }
