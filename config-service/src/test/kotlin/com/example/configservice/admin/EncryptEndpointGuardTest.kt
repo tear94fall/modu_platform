@@ -29,9 +29,9 @@ class EncryptEndpointGuardTest(@Autowired private val mvc: MockMvc) {
 
     @Test
     fun `encrypt then decrypt round-trips with the token`() {
-        val cipher = mvc.perform(post("/encrypt").header(InternalTokenInterceptor.HEADER, "test-token").contentType(MediaType.TEXT_PLAIN).content("secret"))
+        val cipher = mvc.perform(post("/encrypt").header(ConfigServerAuthFilter.HEADER, "test-token").contentType(MediaType.TEXT_PLAIN).content("secret"))
             .andExpect(status().isOk).andReturn().response.contentAsString
-        mvc.perform(post("/decrypt").header(InternalTokenInterceptor.HEADER, "test-token").contentType(MediaType.TEXT_PLAIN).content(cipher))
+        mvc.perform(post("/decrypt").header(ConfigServerAuthFilter.HEADER, "test-token").contentType(MediaType.TEXT_PLAIN).content(cipher))
             .andExpect(status().isOk).andExpect(content().string("secret"))
     }
 }
