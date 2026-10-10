@@ -16,7 +16,9 @@ spring:
   cloud:
     # 설정 서버를 못 만나면 기본값으로 조용히 뜨지 않고 기동에 실패한다(k8s 가 다시 띄운다). 게이트웨이·메신저·커머스 서비스와 같은 규칙.
     # 공통(application.yml: modu.internal-api.token, modu.services.*) + 자기 파일(deploy-service.yml: deploy.*)을 받는다.
-    # deploy.* 는 여기 기본값이 없다 — GitHub·Argo CD 토큰({cipher})과 서비스 목록은 config-repo/deploy-service.yml 이 유일한 출처.
+    # deploy.* 는 여기 기본값이 없다 — GitHub App 비밀키·Argo CD 토큰({cipher})과 서비스 목록은 config-repo/deploy-service.yml 이 유일한 출처.
+    # GitHub 인증: deploy.github.app.{id,installation-id(선택),private-key} 가 있으면 App 설치 토큰(1시간, 자동 갱신),
+    # 없으면 레거시 deploy.github.token(임시 fallback), 둘 다 없으면 익명. 자세히는 deploy-service/README.md.
     config:
       fail-fast: true
 
@@ -60,3 +62,10 @@ springdoc:
     path: /v3/api-docs
   default-produces-media-type: application/json
   paths-to-exclude: /actuator/**, /error
+
+# GitHub App 비밀키는 config-repo(공개 저장소)에 두지 않는다 — k8s Secret `deploy-service` 의 GITHUB_APP_PRIVATE_KEY 가
+# 환경변수 DEPLOY_GITHUB_APP_PRIVATE_KEY 로 들어온다. 비어 있으면 앱 경로를 쓰지 않는다(DeployProperties.App.enabled).
+deploy:
+  github:
+    app:
+      private-key: ${DEPLOY_GITHUB_APP_PRIVATE_KEY:}

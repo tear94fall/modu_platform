@@ -17,10 +17,12 @@ import org.springframework.test.web.client.match.MockRestRequestMatchers.request
 import org.springframework.test.web.client.response.MockRestResponseCreators.withStatus
 import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
 import org.springframework.web.client.RestClient
-import java.time.Instant
 import java.util.Base64
 
-/** 실제 GitHub 응답 모양으로 URI(특히 패키지 이름의 %2F)·헤더·본문을 본다. 네트워크 없음. */
+/**
+ * 실제 GitHub 응답 모양으로 URI(파일 경로의 `/` 는 살아 있어야 한다)·헤더·본문을 본다. 네트워크 없음.
+ * `Authorization` 을 요청마다 넣는 건 [com.example.deployservice.config.DeployWiringCredentialsTest] 가 본다.
+ */
 class GitHubRestGatewayTest {
 
     private val builder: RestClient.Builder = RestClient.builder()
@@ -30,31 +32,6 @@ class GitHubRestGatewayTest {
         .defaultHeader("X-GitHub-Api-Version", "2022-11-28")
     private val server: MockRestServiceServer = MockRestServiceServer.bindTo(builder).build()
     private val gateway = GitHubRestGateway(builder.build(), "tear94fall")
-
-    @Test
-    fun `container versions encode the package slash and keep tags and created_at`() {
-        server.expect(requestTo("https://api.github.com/users/tear94fall/packages/container/modu-chat%2Fpoint-service/versions?per_page=50"))
-            .andExpect(method(HttpMethod.GET))
-            .andExpect(header("Authorization", "Bearer gh-token"))
-            .andExpect(header("Accept", "application/vnd.github+json"))
-            .andExpect(header("X-GitHub-Api-Version", "2022-11-28"))
-            .andRespond(
-                withSuccess(
-                    """[
-                      {"id":1,"created_at":"2026-10-06T12:45:00Z","metadata":{"package_type":"container","container":{"tags":["develop-5708871","develop"]}}},
-                      {"id":2,"created_at":"2026-10-05T00:00:00Z","metadata":{"package_type":"container","container":{"tags":[]}}}
-                    ]""",
-                    MediaType.APPLICATION_JSON,
-                ),
-            )
-
-        val versions = gateway.containerVersions("modu-chat/point-service")
-
-        assertEquals(listOf("develop-5708871", "develop"), versions[0].tags)
-        assertEquals(Instant.parse("2026-10-06T12:45:00Z"), versions[0].createdAt)
-        assertTrue(versions[1].tags.isEmpty())
-        server.verify()
-    }
 
     @Test
     fun `get file decodes base64 content and put file sends sha branch and message`() {

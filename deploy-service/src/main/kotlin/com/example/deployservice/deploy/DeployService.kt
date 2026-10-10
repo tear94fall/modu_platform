@@ -2,6 +2,7 @@ package com.example.deployservice.deploy
 
 import com.example.deployservice.api.ApiException
 import com.example.deployservice.config.DeployProperties
+import com.example.deployservice.gateway.ContainerRegistryGateway
 import com.example.deployservice.gateway.DeploymentSnapshot
 import com.example.deployservice.gateway.GitHubGateway
 import com.example.deployservice.gateway.KubernetesGateway
@@ -78,6 +79,7 @@ interface DeployService {
 class DefaultDeployService(
     private val properties: DeployProperties,
     private val github: GitHubGateway,
+    private val registry: ContainerRegistryGateway,
     private val kubernetes: KubernetesGateway,
     private val store: DeploymentStore,
     private val runner: DeploymentRunner,
@@ -120,14 +122,15 @@ class DefaultDeployService(
     override fun tags(service: String): TagsResponse {
         val spec = spec(service)
         val gitTag = Kustomization.currentTag(readKustomization(), spec.image) ?: UNPINNED_TAG
-        val versions = runCatching { github.containerVersions(packageName(spec.image)) }
+        val versions = runCatching { registry.containerVersions(packageName(spec.image)) }
             .getOrElse { throw ApiException.upstream("github_error", "GHCR 태그 조회 실패: ${it.message}") }
+        val messages = CommitMessages(spec.repo)
         val tags = Tags.select(versions).map { t ->
             TagView(
                 tag = t.tag,
                 sha = t.sha,
                 createdAt = t.createdAt,
-                commitMessage = commitMessage(spec.repo, t.sha),
+                commitMessage = messages.of(t.sha),
                 commitUrl = "https://github.com/${properties.github.owner}/${spec.repo}/commit/${t.sha}",
                 current = t.tag == gitTag,
             )
@@ -142,10 +145,10 @@ class DefaultDeployService(
         }
         // 빠른 사전 확인(GHCR 조회 전에). 최종 판단은 runner.start 의 잠금 안 확인.
         if (store.hasRunning(service)) throw ApiException.conflict("deploy_in_progress", "$service 는 이미 배포 중입니다.")
-        // GHCR 에 있는 태그인지(선택 검사). GHCR 조회 자체가 실패하면 막지 않고 넘어간다 — 커밋·Sync 가 실패로 드러난다.
-        runCatching { github.containerVersions(packageName(spec.image)) }
-            .onSuccess { versions ->
-                if (versions.none { tag in it.tags }) throw ApiException.badRequest("unknown_tag", "GHCR 에 없는 태그입니다: $tag")
+        // GHCR 에 있는 태그인지(선택 검사, 날짜는 읽지 않는다). GHCR 조회 자체가 실패하면 막지 않고 넘어간다 — 커밋·Sync 가 실패로 드러난다.
+        runCatching { registry.tagNames(packageName(spec.image)) }
+            .onSuccess { tags ->
+                if (tag !in tags) throw ApiException.badRequest("unknown_tag", "GHCR 에 없는 태그입니다: $tag")
             }
             .onFailure { log.warn("ghcr check skipped for {}: {}", spec.image, it.message) }
         val record = DeploymentRecord(id = newId(), service = service, tag = tag, by = by, byId = byId, startedAt = clock.instant())
@@ -185,10 +188,27 @@ class DefaultDeployService(
     internal fun packageName(image: String): String =
         image.removePrefix(GHCR).removePrefix("${properties.github.owner}/")
 
-    private fun commitMessage(repo: String, sha: String): String? =
-        commitMessages["$repo/$sha"] ?: runCatching { github.commitMessage(repo, sha) }
-            .getOrElse { log.debug("commit message {}@{} unavailable: {}", repo, sha, it.message); null }
-            ?.also { commitMessages["$repo/$sha"] = it }
+    /**
+     * 한 번의 태그 조회에서 쓰는 커밋 메시지 조회기. 다른 GitHub 호출과 같은 자격(앱 설치 토큰)으로 부른다 —
+     * 설치 토큰은 앱이 설치되지 않은 공개 저장소도 읽을 수 있고 한도는 5000/시간이다.
+     * 그래도 한 번 실패하면(403 rate limit·저장소가 비공개로 바뀜 등) 이 요청에서는 더 부르지 않고 메시지 없이
+     * 돌려준다 — 태그 목록은 그대로 나간다(배포는 막히지 않는다). 성공한 메시지는 sha 별로 캐시한다(바뀌지 않는다).
+     */
+    private inner class CommitMessages(private val repo: String) {
+        private var giveUp = false
+
+        fun of(sha: String): String? {
+            commitMessages["$repo/$sha"]?.let { return it }
+            if (giveUp) return null
+            return runCatching { github.commitMessage(repo, sha) }
+                .onFailure {
+                    giveUp = true
+                    log.info("commit message {}@{} unavailable, 이번 조회의 나머지는 건너뜁니다: {}", repo, sha, it.message)
+                }
+                .getOrNull()
+                ?.also { commitMessages["$repo/$sha"] = it }
+        }
+    }
 
     private fun health(d: DeploymentSnapshot?): ServiceHealth = when {
         d == null -> ServiceHealth.DEGRADED

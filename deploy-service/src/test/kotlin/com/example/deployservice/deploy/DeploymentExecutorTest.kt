@@ -3,6 +3,7 @@ package com.example.deployservice.deploy
 import com.example.deployservice.config.DeployProperties
 import com.example.deployservice.deploy.DeployProps.props
 import com.example.deployservice.gateway.ArgoApplicationState
+import com.example.deployservice.gateway.ContainerRegistryGateway
 import com.example.deployservice.gateway.ArgoCdGateway
 import com.example.deployservice.gateway.ArgoOperationState
 import com.example.deployservice.gateway.ArgoResource
@@ -73,8 +74,35 @@ class FakeGitHub(var content: String) : GitHubGateway {
         return RepoCommit("c0ffee1234567890", "https://github.com/tear94fall/modu_infra/commit/c0ffee1234567890")
     }
     override fun branchHead(repo: String, branch: String) = RepoCommit("head000000000000", "https://github.com/tear94fall/modu_infra/commit/head000000000000")
-    override fun containerVersions(packageName: String) = emptyList<ContainerVersion>()
-    override fun commitMessage(repo: String, sha: String): String? = null
+    /** "<repo>/<sha>" → 메시지. 없으면 null. */
+    val commitMessages = mutableMapOf<String, String>()
+    var commitFailure: Exception? = null
+    var commitCalls = 0
+
+    override fun commitMessage(repo: String, sha: String): String? {
+        commitCalls++
+        commitFailure?.let { throw it }
+        return commitMessages["$repo/$sha"]
+    }
+}
+
+/** GHCR 레지스트리 가짜. [versions] 를 그대로 돌려주고, [fail] 이 있으면 던진다. */
+class FakeRegistry(var versions: List<ContainerVersion> = emptyList()) : ContainerRegistryGateway {
+    var fail: Exception? = null
+    var versionCalls = 0
+    var tagNameCalls = 0
+
+    override fun containerVersions(packageName: String): List<ContainerVersion> {
+        versionCalls++
+        fail?.let { throw it }
+        return versions
+    }
+
+    override fun tagNames(packageName: String): List<String> {
+        tagNameCalls++
+        fail?.let { throw it }
+        return versions.flatMap { it.tags }
+    }
 }
 
 class FakeArgo : ArgoCdGateway {

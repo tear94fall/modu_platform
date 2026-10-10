@@ -28,7 +28,12 @@ deploy:
     infra-repo: modu_infra
     infra-branch: main
     kustomization-path: k8s/overlays/dev/kustomization.yaml
-    token: '{cipher}18807a034068bed69a97b6a3487c42b66ae03f0aa4961fb48d3e28cd04dbf9599e51635cab8dca8bc5c29be95a0c78ccf9e258948e4da9fb052b5e3b0fc8e276'
+    # GitHub App modu-deploy-tear94fall(App ID 5263639) — modu_infra 에만 설치했고 권한은 contents:write + metadata:read.
+    # 설치 토큰은 1시간짜리라 유출돼도 수명이 짧고, 사람 계정과 묶이지 않는다. 설치 번호는 비워 두면 앱이 조회해서 캐시한다.
+    app:
+      id: '5263639'
+      # private-key 는 여기 두지 않는다 — 이 저장소는 공개다. k8s Secret deploy-service 의 GITHUB_APP_PRIVATE_KEY 가
+      # 환경변수 DEPLOY_GITHUB_APP_PRIVATE_KEY 로 들어온다(modu_infra k8s/create-infra-secret.sh).
   argocd:
     url: http://argocd-server.argocd.svc
     application: modu-dev
