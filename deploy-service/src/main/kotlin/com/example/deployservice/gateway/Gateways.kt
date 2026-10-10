@@ -9,7 +9,7 @@ data class RepoFile(val sha: String, val content: String)
 /** 커밋 하나: 전체 sha 와 GitHub 화면 주소. */
 data class RepoCommit(val sha: String, val htmlUrl: String)
 
-/** GitHub(저장소 내용·커밋·GHCR 패키지). 구현은 [GitHubRestGateway], 테스트는 가짜. */
+/** GitHub(저장소 내용·커밋). 구현은 [GitHubRestGateway], 테스트는 가짜. GHCR 태그는 [ContainerRegistryGateway] 가 본다. */
 interface GitHubGateway {
     /** [repo] 의 [branch] 에 있는 [path] 파일. */
     fun getFile(repo: String, branch: String, path: String): RepoFile
@@ -20,11 +20,28 @@ interface GitHubGateway {
     /** [branch] 의 HEAD 커밋. */
     fun branchHead(repo: String, branch: String): RepoCommit
 
-    /** GHCR 컨테이너 패키지 [packageName](`modu-chat/point-service` 처럼 owner 뒤 경로)의 버전들(태그·생성 시각). */
+    /**
+     * [repo] 의 커밋 [sha] 메시지 첫 줄. 못 읽으면 null.
+     *
+     * 앱은 modu_infra 에만 설치되지만 **설치 토큰으로 공개 저장소를 읽을 수 있다**(확인: 설치 토큰으로
+     * `GET /repos/tear94fall/modu_chat/contents/README.md` → 200, `GET /installation/repositories` 에는 modu_infra 만).
+     * 그래서 다른 GitHub 호출과 같은 자격을 쓴다 — 익명 60/시간 대신 5000/시간이고 특별한 경로가 없다.
+     */
+    fun commitMessage(repo: String, sha: String): String?
+}
+
+/**
+ * 컨테이너 레지스트리(GHCR)의 태그. 구현은 [GhcrRegistryGateway](레지스트리 `/v2/...` API, 익명),
+ * 테스트는 가짜. [packageName] 은 owner 뒤 경로(`modu-chat/point-service`)다.
+ *
+ * GitHub Packages REST API 를 쓰지 않는 이유: 공개 패키지라도 인증이 필요하고 fine-grained 토큰·GitHub App 은 그 API 를 쓸 수 없다.
+ */
+interface ContainerRegistryGateway {
+    /** 배포 가능한 태그와 각 태그의 이미지 생성 시각(못 읽은 태그는 [Instant.EPOCH]). */
     fun containerVersions(packageName: String): List<ContainerVersion>
 
-    /** [repo] 의 커밋 [sha] 메시지 첫 줄. 못 읽으면 null. */
-    fun commitMessage(repo: String, sha: String): String?
+    /** 태그 이름만 — 날짜를 읽지 않아 싸다(배포 요청 때 "GHCR 에 있는 태그인가" 확인용). */
+    fun tagNames(packageName: String): List<String>
 }
 
 /** Argo CD Application 의 현재 상태 중 배포가 보는 것. */
