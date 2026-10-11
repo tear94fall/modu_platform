@@ -1,6 +1,7 @@
 package com.example.gatewayservice.config
 
-import org.springframework.boot.autoconfigure.web.reactive.function.client.ReactorNettyHttpClientMapper
+import org.springframework.boot.http.client.autoconfigure.reactive.ClientHttpConnectorBuilderCustomizer
+import org.springframework.boot.http.client.reactive.ReactorClientHttpConnectorBuilder
 import org.springframework.cloud.gateway.config.HttpClientCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -21,10 +22,13 @@ class DnsCacheConfig {
     fun shortDnsCacheHttpClientCustomizer(): HttpClientCustomizer =
         HttpClientCustomizer { client -> client.withShortDnsCache() }
 
-    /** API 문서 조회용 WebClient(WebClient.Builder 자동 설정)도 같은 리졸버 설정을 쓴다. */
+    /**
+     * API 문서 조회용 WebClient(WebClient.Builder 자동 설정)도 같은 리졸버 설정을 쓴다.
+     * Boot 4 는 ReactorNettyHttpClientMapper 를 없애고, 자동 설정이 만드는 커넥터 빌더에 커스터마이저를 거는 방식으로 바꿨다.
+     */
     @Bean
-    fun shortDnsCacheHttpClientMapper(): ReactorNettyHttpClientMapper =
-        ReactorNettyHttpClientMapper { client -> client.withShortDnsCache() }
+    fun shortDnsCacheConnectorCustomizer(): ClientHttpConnectorBuilderCustomizer<ReactorClientHttpConnectorBuilder> =
+        ClientHttpConnectorBuilderCustomizer { builder -> builder.withHttpClientCustomizer { client -> client.withShortDnsCache() } }
 
     companion object {
         val DNS_CACHE_TTL: Duration = Duration.ofSeconds(5)

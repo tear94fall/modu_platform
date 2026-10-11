@@ -8,4 +8,4 @@ import org.springframework.data.repository.Repository
  * [RoJpaConfig] 가 `deploy.ro` 패키지에서 이것을 잇는 인터페이스만 빈으로 만든다.
  */
 @NoRepositoryBean
-interface RoRepository<T, ID> : Repository<T, ID>
+interface RoRepository<T : Any, ID : Any> : Repository<T, ID>

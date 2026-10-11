@@ -3,8 +3,8 @@ package com.example.deployservice.gateway
 import com.example.deployservice.api.UpstreamException
 import com.example.deployservice.deploy.ContainerVersion
 import com.example.deployservice.deploy.Tags
-import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import tools.jackson.databind.JsonNode
+import tools.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpHeaders
 import org.springframework.web.client.RestClient
@@ -71,7 +71,8 @@ class GhcrRegistryGateway(
             .uri { b -> b.path("/v2/${repository(packageName)}/tags/list").build() }
             .header(HttpHeaders.AUTHORIZATION, "Bearer ${pullToken(packageName)}")
             .retrieve().body(String::class.java).let(::json) ?: return@call emptyList()
-        node.path("tags").map { it.asText("") }.filter { it.isNotBlank() }
+        // Jackson 3 에서 JsonNode 의 Iterable 이 코틀린 map 과 어긋나게 풀린다 — 자식 노드 컬렉션을 명시한다.
+        node.path("tags").values().map { it.asText("") }.filter { it.isNotBlank() }
     }
 
     override fun containerVersions(packageName: String): List<ContainerVersion> {

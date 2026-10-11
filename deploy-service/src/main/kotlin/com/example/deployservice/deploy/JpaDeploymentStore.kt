@@ -3,8 +3,8 @@ package com.example.deployservice.deploy
 import com.example.deployservice.config.DeployProperties
 import com.example.deployservice.deploy.ro.DeploymentRoRepository
 import com.example.deployservice.deploy.rw.DeploymentRwRepository
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
+import tools.jackson.databind.ObjectMapper
+import tools.jackson.module.kotlin.readValue
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.dao.DataIntegrityViolationException

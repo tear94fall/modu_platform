@@ -1,8 +1,8 @@
 package com.example.gatewayservice.apidocs
 
-import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.node.JsonNodeFactory
-import com.fasterxml.jackson.databind.node.ObjectNode
+import tools.jackson.databind.JsonNode
+import tools.jackson.databind.node.JsonNodeFactory
+import tools.jackson.databind.node.ObjectNode
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.cloud.gateway.config.GatewayProperties
 import org.springframework.cloud.gateway.route.RouteDefinition
@@ -46,7 +46,8 @@ class ApiDocsService(
     fun targets(): List<ApiDocsTarget> {
         val routes = gatewayProperties.routes
         val baseUris = linkedMapOf<String, URI>()
-        routes.forEach { route -> addresses.nameOf(route.uri)?.let { name -> baseUris.putIfAbsent(name, route.uri) } }
+        // Gateway 5 의 RouteDefinition.uri 는 @Nullable 이다 — uri 없는 라우트는 문서 대상이 아니다.
+        routes.forEach { route -> val uri = route.uri ?: return@forEach; addresses.nameOf(uri)?.let { name -> baseUris.putIfAbsent(name, uri) } }
         properties.extraServices.forEach { (name, uri) -> baseUris.putIfAbsent(name.lowercase(), uri) }
         return baseUris
             .filterKeys { it !in EXCLUDED }
@@ -101,7 +102,7 @@ class ApiDocsService(
             val server = JsonNodeFactory.instance.objectNode()
                 .put("url", "/$name")
                 .put("description", SERVER_DESCRIPTION)
-            doc.set<JsonNode>("servers", JsonNodeFactory.instance.arrayNode().add(server))
+            doc.set("servers", JsonNodeFactory.instance.arrayNode().add(server))   // Jackson 3 의 ObjectNode.set 은 제네릭이 아니다
             return doc
         }
     }

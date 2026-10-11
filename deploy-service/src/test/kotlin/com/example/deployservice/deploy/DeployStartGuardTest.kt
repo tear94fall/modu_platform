@@ -4,9 +4,7 @@ import com.example.deployservice.api.ApiException
 import com.example.deployservice.config.DeployProperties
 import com.example.deployservice.deploy.ro.DeploymentRoRepository
 import com.example.deployservice.deploy.rw.DeploymentRwRepository
-import com.fasterxml.jackson.databind.SerializationFeature
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import tools.jackson.module.kotlin.jacksonObjectMapper
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -40,7 +38,8 @@ class DeployStartGuardTest {
 
     private val rw: DeploymentRwRepository = mock()
     private val ro: DeploymentRoRepository = mock()
-    private val objectMapper = jacksonObjectMapper().registerModule(JavaTimeModule()).disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+    // Jackson 3 은 java.time 을 기본 지원하고 날짜를 ISO 문자열로 쓴다(JavaTimeModule·WRITE_DATES_AS_TIMESTAMPS 가 필요 없다).
+    private val objectMapper = jacksonObjectMapper()
 
     /**
      * 트랜잭션은 흉내만 낸다(열고 닫는 척). 저장소 안의 TransactionTemplate 은 블록을 실행하고 예외를 그대로 올리므로
@@ -62,7 +61,7 @@ class DeployStartGuardTest {
     @Test
     fun `an insert rejected by the unique key becomes false`() {
         noneRunning()
-        whenever(rw.saveAndFlush(any())).thenThrow(
+        whenever(rw.saveAndFlush(any<DeploymentEntity>())).thenThrow(
             DataIntegrityViolationException("Duplicate entry 'point-service' for key 'deployment.uk_deployment_running_service'"),
         )
 
@@ -72,7 +71,7 @@ class DeployStartGuardTest {
     @Test
     fun `the runner turns that rejection into 409 deploy_in_progress`() {
         noneRunning()
-        whenever(rw.saveAndFlush(any())).thenThrow(
+        whenever(rw.saveAndFlush(any<DeploymentEntity>())).thenThrow(
             DataIntegrityViolationException("Duplicate entry 'point-service' for key 'deployment.uk_deployment_running_service'"),
         )
         val runner = DeploymentRunner(store, mock())
@@ -88,7 +87,7 @@ class DeployStartGuardTest {
     @Test
     fun `an insert that goes through returns true`() {
         noneRunning()
-        whenever(rw.saveAndFlush(any())).thenAnswer { it.arguments[0] }
+        whenever(rw.saveAndFlush(any<DeploymentEntity>())).thenAnswer { it.arguments[0] }
 
         assertTrue(store.addIfNoneRunning(record("dep-1")))
         verify(rw).saveAndFlush(any())
@@ -105,7 +104,7 @@ class DeployStartGuardTest {
     @Test
     fun `any other DB failure propagates instead of looking like a conflict`() {
         noneRunning()
-        whenever(rw.saveAndFlush(any())).thenThrow(RecoverableDataAccessException("Connection refused"))
+        whenever(rw.saveAndFlush(any<DeploymentEntity>())).thenThrow(RecoverableDataAccessException("Connection refused"))
 
         val e = assertThrows<RecoverableDataAccessException> { store.addIfNoneRunning(record("dep-1")) }
         assertEquals("Connection refused", e.message)
@@ -121,7 +120,7 @@ class DeployStartGuardTest {
         noneRunning()
         // 여덟 INSERT 가 모두 동시에 저장소 안에 들어와야 통과한다. 어딘가에서 직렬화되면 장벽이 안 모여 TimeoutException → 시작 실패.
         val barrier = CyclicBarrier(services.size)
-        whenever(rw.saveAndFlush(any())).thenAnswer { barrier.await(10, TimeUnit.SECONDS); it.arguments[0] }
+        whenever(rw.saveAndFlush(any<DeploymentEntity>())).thenAnswer { barrier.await(10, TimeUnit.SECONDS); it.arguments[0] }
         val runner = DeploymentRunner(store, mock())
         val pool = Executors.newFixedThreadPool(services.size)
         try {

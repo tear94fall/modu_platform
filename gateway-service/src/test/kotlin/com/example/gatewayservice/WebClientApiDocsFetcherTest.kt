@@ -39,7 +39,8 @@ class WebClientApiDocsFetcherTest {
 
     /** 에러로 끝난 Mono 의 에러(값으로 끝나면 null). */
     private fun errorOf(mono: Mono<*>): Throwable? =
-        mono.map<Throwable?> { null }.onErrorResume { Mono.just(it) }.block(Duration.ofSeconds(5))
+        // Reactor 3.8 의 map 은 null 을 못 내보낸다 — 값으로 끝나면 비우고, 에러면 그 에러를 값으로 돌린다.
+        mono.then(Mono.empty<Throwable>()).onErrorResume { Mono.just(it) }.blockOptional(Duration.ofSeconds(5)).orElse(null)
 
     @Test
     fun fetchesV3ApiDocsUnderTheServiceAddress() {
