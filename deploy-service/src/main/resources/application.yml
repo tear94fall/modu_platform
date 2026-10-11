@@ -69,3 +69,6 @@ deploy:
   github:
     app:
       private-key: ${DEPLOY_GITHUB_APP_PRIVATE_KEY:}
+  # Argo CD 로컬 계정 deploy 의 API 토큰도 같은 Secret(deploy-service)의 ARGOCD_TOKEN 에서 온다.
+  argocd:
+    token: ${DEPLOY_ARGOCD_TOKEN:}

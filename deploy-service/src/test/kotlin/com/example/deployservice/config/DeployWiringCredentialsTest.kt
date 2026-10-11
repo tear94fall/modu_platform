@@ -1,5 +1,6 @@
 package com.example.deployservice.config
 
+import com.example.deployservice.gateway.ArgoCdRestGateway
 import com.example.deployservice.gateway.GitHubRestGateway
 import com.example.deployservice.github.GitHubAppCredentials
 import com.example.deployservice.github.GitHubCredentials
@@ -82,6 +83,36 @@ class DeployWiringCredentialsTest {
         val credentials = wiring.gitHubCredentials(props(app = DeployProperties.GitHub.App("Iv23li", "", pkcs8Pem)), clock)
 
         assertInstanceOf(GitHubAppCredentials::class.java, credentials)
+    }
+
+    /**
+     * Argo CD 토큰도 공개 저장소가 아니라 k8s Secret 에서 온다. 비어 있으면 Authorization 을 넣지 않아야 한다 —
+     * 가짜 `Bearer ` 를 붙이면 Argo 가 주는 오류가 흐려진다.
+     */
+    @Test
+    fun `the argocd client omits authorization when the token is empty`() {
+        val builder = DeployWiring.argoCdClientBuilder("https://argocd.example/", "")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("https://argocd.example/api/v1/applications/modu-dev"))
+            .andExpect(headerDoesNotExist("Authorization"))
+            .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON))
+
+        ArgoCdRestGateway(builder.build()).state("modu-dev")
+
+        server.verify()
+    }
+
+    @Test
+    fun `the argocd client sends the bearer token when present`() {
+        val builder = DeployWiring.argoCdClientBuilder("https://argocd.example", "argo-token")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("https://argocd.example/api/v1/applications/modu-dev"))
+            .andExpect(header("Authorization", "Bearer argo-token"))
+            .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON))
+
+        ArgoCdRestGateway(builder.build()).state("modu-dev")
+
+        server.verify()
     }
 
     @Test

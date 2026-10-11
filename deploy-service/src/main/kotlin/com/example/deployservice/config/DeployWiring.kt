@@ -57,6 +57,16 @@ class DeployWiring {
 
         /** GHCR 레지스트리 클라이언트 — GitHub 자격을 붙이지 않는다(요청마다 익명 pull 토큰을 받는다). */
         fun ghcrClientBuilder(registryUrl: String = GHCR_URL): RestClient.Builder = RestClient.builder().baseUrl(registryUrl.trimEnd('/'))
+
+        /**
+         * Argo CD 클라이언트. 토큰이 비면 `Authorization` 을 **넣지 않는다** — 가짜 `Bearer ` 를 붙이면 Argo 가 주는 오류가 흐려진다.
+         * 빌더로 돌려주는 건 테스트가 MockRestServiceServer 를 붙일 수 있게 하려는 것이다.
+         */
+        fun argoCdClientBuilder(url: String, token: String): RestClient.Builder {
+            val builder = RestClient.builder().baseUrl(url.trimEnd('/'))
+            if (token.isNotBlank()) builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer $token")
+            return builder
+        }
     }
 
     @Bean
@@ -106,15 +116,18 @@ class DeployWiring {
     fun containerRegistryGateway(properties: DeployProperties, clock: Clock): ContainerRegistryGateway =
         GhcrRegistryGateway(ghcrClientBuilder().requestFactory(requestFactory()).build(), properties.github.owner, clock)
 
+    /**
+     * Argo CD 클라이언트. 토큰은 공개 저장소인 config-repo 가 아니라 k8s Secret `deploy-service` 의 ARGOCD_TOKEN →
+     * 환경변수 DEPLOY_ARGOCD_TOKEN 으로 들어온다. 비어 있으면 기동 때 경고를 남기고 Authorization 없이 부른다 —
+     * 그래야 Sync 단계에서 401 로 또렷하게 실패한다.
+     */
     @Bean
     fun argoCdGateway(properties: DeployProperties): ArgoCdGateway {
         val argo = properties.argocd
-        val client = RestClient.builder()
-            .baseUrl(argo.url.trimEnd('/'))
-            .requestFactory(requestFactory())
-            .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer ${argo.token}")
-            .build()
-        return ArgoCdRestGateway(client)
+        if (argo.token.isBlank()) {
+            log.warn("argocd 토큰이 비어 있습니다 — 배포의 Sync 단계가 401 로 실패합니다(Secret deploy-service 의 ARGOCD_TOKEN 확인).")
+        }
+        return ArgoCdRestGateway(argoCdClientBuilder(argo.url, argo.token).requestFactory(requestFactory()).build())
     }
 
     /** 기본 설정: 파드 안에선 ServiceAccount(토큰·CA 자동), 로컬에선 ~/.kube/config. 만들 때 접속하지 않는다. */
