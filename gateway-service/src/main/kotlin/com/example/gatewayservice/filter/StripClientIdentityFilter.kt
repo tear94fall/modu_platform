@@ -17,8 +17,8 @@ class StripClientIdentityFilter : GlobalFilter, Ordered {
 
     override fun filter(exchange: ServerWebExchange, chain: GatewayFilterChain): Mono<Void> {
         val headers = exchange.request.headers
-        val hasUser = headers.containsKey(AuthorizationHeaderFilter.USER_ID_HEADER)
-        val hasClient = headers.containsKey(AuthorizationHeaderFilter.CLIENT_ID_HEADER)
+        val hasUser = headers.containsHeader(AuthorizationHeaderFilter.USER_ID_HEADER)
+        val hasClient = headers.containsHeader(AuthorizationHeaderFilter.CLIENT_ID_HEADER)
         if (!hasUser && !hasClient) {
             return chain.filter(exchange)
         }

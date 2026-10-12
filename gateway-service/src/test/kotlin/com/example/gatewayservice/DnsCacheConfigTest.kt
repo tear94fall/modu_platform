@@ -7,7 +7,9 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.autoconfigure.web.reactive.function.client.ReactorNettyHttpClientMapper
+import org.springframework.boot.http.client.autoconfigure.reactive.ClientHttpConnectorBuilderCustomizer
+import org.springframework.boot.http.client.reactive.ClientHttpConnectorBuilder
+import org.springframework.boot.http.client.reactive.ReactorClientHttpConnectorBuilder
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.cloud.gateway.config.HttpClientCustomizer
 import reactor.netty.http.client.HttpClient
@@ -28,7 +30,7 @@ class DnsCacheConfigTest {
 
     @Autowired lateinit var customizers: List<HttpClientCustomizer>
 
-    @Autowired lateinit var mappers: List<ReactorNettyHttpClientMapper>
+    @Autowired lateinit var connectorCustomizers: List<ClientHttpConnectorBuilderCustomizer<ReactorClientHttpConnectorBuilder>>
 
     @Test
     fun routingHttpClient_getsShortDnsCache() {
@@ -38,8 +40,12 @@ class DnsCacheConfigTest {
 
     @Test
     fun webClient_getsShortDnsCache() {
-        val client = mappers.fold(HttpClient.create()) { c, m -> m.configure(c) }
-        assertTrue(client.configuration().resolver() is DnsAddressResolverGroup)
+        // Boot 4: 커스터마이저는 빌더에 HttpClient 연산자를 쌓고 build() 때 순서대로 적용한다. 마지막 연산자로 결과를 잡아 본다.
+        var captured: HttpClient? = null
+        var builder = ClientHttpConnectorBuilder.reactor()
+        connectorCustomizers.forEach { builder = it.customize(builder) }
+        builder.withHttpClientCustomizer { c -> captured = c; c }.build()
+        assertTrue(captured!!.configuration().resolver() is DnsAddressResolverGroup, "resolver = ${captured!!.configuration().resolver()}")
     }
 
     @Test

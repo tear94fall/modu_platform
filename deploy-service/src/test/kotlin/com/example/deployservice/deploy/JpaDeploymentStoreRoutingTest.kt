@@ -3,9 +3,7 @@ package com.example.deployservice.deploy
 import com.example.deployservice.config.DeployProperties
 import com.example.deployservice.deploy.ro.DeploymentRoRepository
 import com.example.deployservice.deploy.rw.DeploymentRwRepository
-import com.fasterxml.jackson.databind.SerializationFeature
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import tools.jackson.module.kotlin.jacksonObjectMapper
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
@@ -26,7 +24,8 @@ class JpaDeploymentStoreRoutingTest {
 
     private val rw: DeploymentRwRepository = mock()
     private val ro: DeploymentRoRepository = mock()
-    private val objectMapper = jacksonObjectMapper().registerModule(JavaTimeModule()).disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+    // Jackson 3 은 java.time 을 기본 지원하고 날짜를 ISO 문자열로 쓴다.
+    private val objectMapper = jacksonObjectMapper()
     private val properties = DeployProperties()
     private val store = JpaDeploymentStore(rw, ro, objectMapper, properties, mock())
 

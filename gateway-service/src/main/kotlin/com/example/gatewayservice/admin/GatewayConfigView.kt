@@ -53,17 +53,18 @@ object GatewayConfigView {
     fun of(gateway: GatewayProperties, cors: GlobalCorsProperties, now: Instant = Instant.now()) =
         GatewayConfigResponse(
             routes = gateway.routes.map { route ->
-                val filters = route.filters.map { DefinitionView(it.name, maskSecrets(it.name, argsOf(it.args))) }
+                // Spring Cloud Gateway 5 는 FilterDefinition.name 을 @Nullable 로 표시한다(설정에서 비울 수 있다).
+                val filters = route.filters.map { DefinitionView(it.name.orEmpty(), maskSecrets(it.name.orEmpty(), argsOf(it.args))) }
                 RouteView(
                     id = route.id,
                     uri = route.uri?.toString(),
                     order = route.order,
-                    predicates = route.predicates.map { DefinitionView(it.name, argsOf(it.args)) },
+                    predicates = route.predicates.map { DefinitionView(it.name.orEmpty(), argsOf(it.args)) },
                     filters = filters,
                     access = accessOf(route.filters.firstOrNull { it.name == AUTH_FILTER }?.args),
                 )
             },
-            defaultFilters = gateway.defaultFilters.map { DefinitionView(it.name, maskSecrets(it.name, argsOf(it.args))) },
+            defaultFilters = gateway.defaultFilters.map { DefinitionView(it.name.orEmpty(), maskSecrets(it.name.orEmpty(), argsOf(it.args))) },
             cors = cors.corsConfigurations.map { (pattern, c) ->
                 CorsView(
                     pattern = pattern,

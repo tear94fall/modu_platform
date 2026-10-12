@@ -40,200 +40,203 @@ spring:
     config:
       fail-fast: true
     gateway:
-      # 외부 요청이 들고 온 내부 토큰 헤더는 항상 떼어낸다. 내부 토큰은 서비스 간 Feign 만 붙인다.
-      default-filters:
-        - RemoveRequestHeader=X-Internal-Token
-      # 백오피스(브라우저)용 CORS. 허용 origin 은 modu.admin.allowed-origin.
-      globalcors:
-        cors-configurations:
-          '[/**]':
-            allowedOrigins: ${modu.admin.allowed-origin:http://localhost:5173}
-            allowedMethods: [GET, POST, PUT, DELETE, OPTIONS]
-            allowedHeaders: "*"
-            allowCredentials: false
-            maxAge: 3600
-      routes:
-        # ---- 인증 없이 통과하는 public 엔드포인트 (와일드카드보다 먼저 매칭돼야 한다) ----
-        - id: auth-service-oauth2
-          uri: ${modu.services.auth-service}
-          predicates:
-            - Path=/auth-service/oauth2/token,/auth-service/oauth2/revoke,/auth-service/oauth2/jwks,/auth-service/oauth2/introspect,/auth-service/userinfo,/auth-service/.well-known/**
-          filters:
-            - RewritePath=/auth-service/(?<segment>.*), /$\{segment}
-        - id: auth-service-public
-          uri: ${modu.services.auth-service}
-          predicates:
-            - Path=/auth-service/api-public/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_USER,modu-chat
-            - RewritePath=/auth-service/(?<segment>.*), /$\{segment}
-        - id: member-service-public
-          uri: ${modu.services.member-service}
-          predicates:
-            - Path=/member-service/api-public/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_USER,modu-chat
-            - RewritePath=/member-service/(?<segment>.*), /$\{segment}
-        - id: chat-service-public
-          uri: ${modu.services.chat-service}
-          predicates:
-            - Path=/chat-service/api-public/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_USER,modu-chat
-            - RewritePath=/chat-service/(?<segment>.*), /$\{segment}
-        - id: profile-service-public
-          uri: ${modu.services.profile-service}
-          predicates:
-            - Path=/profile-service/api-public/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_USER,modu-chat
-            - RewritePath=/profile-service/(?<segment>.*), /$\{segment}
-        - id: storage-service-public
-          uri: ${modu.services.storage-service}
-          predicates:
-            - Path=/storage-service/api-public/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_USER,modu-chat
-            - RewritePath=/storage-service/(?<segment>.*), /$\{segment}
-        - id: push-service-public
-          uri: ${modu.services.push-service}
-          predicates:
-            - Path=/push-service/api-public/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_USER,modu-chat
-            - RewritePath=/push-service/(?<segment>.*), /$\{segment}
-        - id: point-service-public
-          uri: ${modu.services.point-service}
-          predicates:
-            - Path=/point-service/api-public/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_USER,modu-chat
-            - RewritePath=/point-service/(?<segment>.*), /$\{segment}
-        # 커머스 앱(modu_commerce web·Android). 회원 등급표만 로그인 없이 GET 으로 열고(아래 catch-all 보다 먼저),
-        # 나머지는 커머스 앱 토큰(aud=modu-commerce)이 필요하다. commerce 도 JWT 를 다시 검증한다.
-        - id: commerce-service-public-open
-          uri: ${modu.services.commerce-service}
-          predicates:
-            - Path=/commerce-service/api-public/v1/tiers
-            - Method=GET
-          filters:
-            - RewritePath=/commerce-service/(?<segment>.*), /$\{segment}
-        - id: commerce-service-public
-          uri: ${modu.services.commerce-service}
-          predicates:
-            - Path=/commerce-service/api-public/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_USER,modu-commerce
-            - RewritePath=/commerce-service/(?<segment>.*), /$\{segment}
+      # Spring Cloud Gateway 5(Spring Cloud 2025)부터 WebFlux 서버 설정은 spring.cloud.gateway.server.webflux.* 아래에 둔다.
+      server:
+        webflux:
+          # 외부 요청이 들고 온 내부 토큰 헤더는 항상 떼어낸다. 내부 토큰은 서비스 간 Feign 만 붙인다.
+          default-filters:
+            - RemoveRequestHeader=X-Internal-Token
+          # 백오피스(브라우저)용 CORS. 허용 origin 은 modu.admin.allowed-origin.
+          globalcors:
+            cors-configurations:
+              '[/**]':
+                allowedOrigins: ${modu.admin.allowed-origin:http://localhost:5173}
+                allowedMethods: [GET, POST, PUT, DELETE, OPTIONS]
+                allowedHeaders: "*"
+                allowCredentials: false
+                maxAge: 3600
+          routes:
+            # ---- 인증 없이 통과하는 public 엔드포인트 (와일드카드보다 먼저 매칭돼야 한다) ----
+            - id: auth-service-oauth2
+              uri: ${modu.services.auth-service}
+              predicates:
+                - Path=/auth-service/oauth2/token,/auth-service/oauth2/revoke,/auth-service/oauth2/jwks,/auth-service/oauth2/introspect,/auth-service/userinfo,/auth-service/.well-known/**
+              filters:
+                - RewritePath=/auth-service/(?<segment>.*), /$\{segment}
+            - id: auth-service-public
+              uri: ${modu.services.auth-service}
+              predicates:
+                - Path=/auth-service/api-public/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_USER,modu-chat
+                - RewritePath=/auth-service/(?<segment>.*), /$\{segment}
+            - id: member-service-public
+              uri: ${modu.services.member-service}
+              predicates:
+                - Path=/member-service/api-public/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_USER,modu-chat
+                - RewritePath=/member-service/(?<segment>.*), /$\{segment}
+            - id: chat-service-public
+              uri: ${modu.services.chat-service}
+              predicates:
+                - Path=/chat-service/api-public/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_USER,modu-chat
+                - RewritePath=/chat-service/(?<segment>.*), /$\{segment}
+            - id: profile-service-public
+              uri: ${modu.services.profile-service}
+              predicates:
+                - Path=/profile-service/api-public/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_USER,modu-chat
+                - RewritePath=/profile-service/(?<segment>.*), /$\{segment}
+            - id: storage-service-public
+              uri: ${modu.services.storage-service}
+              predicates:
+                - Path=/storage-service/api-public/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_USER,modu-chat
+                - RewritePath=/storage-service/(?<segment>.*), /$\{segment}
+            - id: push-service-public
+              uri: ${modu.services.push-service}
+              predicates:
+                - Path=/push-service/api-public/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_USER,modu-chat
+                - RewritePath=/push-service/(?<segment>.*), /$\{segment}
+            - id: point-service-public
+              uri: ${modu.services.point-service}
+              predicates:
+                - Path=/point-service/api-public/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_USER,modu-chat
+                - RewritePath=/point-service/(?<segment>.*), /$\{segment}
+            # 커머스 앱(modu_commerce web·Android). 회원 등급표만 로그인 없이 GET 으로 열고(아래 catch-all 보다 먼저),
+            # 나머지는 커머스 앱 토큰(aud=modu-commerce)이 필요하다. commerce 도 JWT 를 다시 검증한다.
+            - id: commerce-service-public-open
+              uri: ${modu.services.commerce-service}
+              predicates:
+                - Path=/commerce-service/api-public/v1/tiers
+                - Method=GET
+              filters:
+                - RewritePath=/commerce-service/(?<segment>.*), /$\{segment}
+            - id: commerce-service-public
+              uri: ${modu.services.commerce-service}
+              predicates:
+                - Path=/commerce-service/api-public/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_USER,modu-commerce
+                - RewritePath=/commerce-service/(?<segment>.*), /$\{segment}
 
-        # ---- admin 계층. ROLE_ADMIN JWT 를 검사하고, 통과한 요청에만 내부 토큰을 붙여 넘긴다 ----
-        - id: member-service-admin
-          uri: ${modu.services.member-service}
-          predicates:
-            - Path=/member-service/api-admin/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
-            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
-            - RewritePath=/member-service/(?<segment>.*), /$\{segment}
-        - id: chat-service-admin
-          uri: ${modu.services.chat-service}
-          predicates:
-            - Path=/chat-service/api-admin/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
-            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
-            - RewritePath=/chat-service/(?<segment>.*), /$\{segment}
-        - id: push-service-admin
-          uri: ${modu.services.push-service}
-          predicates:
-            - Path=/push-service/api-admin/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
-            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
-            - RewritePath=/push-service/(?<segment>.*), /$\{segment}
+            # ---- admin 계층. ROLE_ADMIN JWT 를 검사하고, 통과한 요청에만 내부 토큰을 붙여 넘긴다 ----
+            - id: member-service-admin
+              uri: ${modu.services.member-service}
+              predicates:
+                - Path=/member-service/api-admin/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
+                - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+                - RewritePath=/member-service/(?<segment>.*), /$\{segment}
+            - id: chat-service-admin
+              uri: ${modu.services.chat-service}
+              predicates:
+                - Path=/chat-service/api-admin/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
+                - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+                - RewritePath=/chat-service/(?<segment>.*), /$\{segment}
+            - id: push-service-admin
+              uri: ${modu.services.push-service}
+              predicates:
+                - Path=/push-service/api-admin/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
+                - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+                - RewritePath=/push-service/(?<segment>.*), /$\{segment}
 
-        - id: storage-service-admin
-          uri: ${modu.services.storage-service}
-          predicates:
-            - Path=/storage-service/api-admin/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
-            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
-            - RewritePath=/storage-service/(?<segment>.*), /$\{segment}
+            - id: storage-service-admin
+              uri: ${modu.services.storage-service}
+              predicates:
+                - Path=/storage-service/api-admin/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
+                - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+                - RewritePath=/storage-service/(?<segment>.*), /$\{segment}
 
-        - id: point-service-admin
-          uri: ${modu.services.point-service}
-          predicates:
-            - Path=/point-service/api-admin/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
-            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
-            - RewritePath=/point-service/(?<segment>.*), /$\{segment}
+            - id: point-service-admin
+              uri: ${modu.services.point-service}
+              predicates:
+                - Path=/point-service/api-admin/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
+                - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+                - RewritePath=/point-service/(?<segment>.*), /$\{segment}
 
-        # ---- 직원 콘솔(모두 인터널) 계층. 회원 조회는 인터널 권한, 직원 지정·권한 변경은 최상위 관리자만 ----
-        # 두 계층은 첫 경로 조각부터 다르다(api-staff / api-super). 한 계층 안에 좁은 경로를 두면
-        # 톰캣이 // 를 합치는 탓에 /api-staff//staff 가 넓은 라우트를 지나 좁은 경로에 닿을 수 있다.
-        - id: member-service-super
-          uri: ${modu.services.member-service}
-          predicates:
-            - Path=/member-service/api-super/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_SUPER,modu-admin
-            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
-            - RewritePath=/member-service/(?<segment>.*), /$\{segment}
-        - id: member-service-staff
-          uri: ${modu.services.member-service}
-          predicates:
-            - Path=/member-service/api-staff/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_INTERNAL,modu-admin
-            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
-            - RewritePath=/member-service/(?<segment>.*), /$\{segment}
+            # ---- 직원 콘솔(모두 인터널) 계층. 회원 조회는 인터널 권한, 직원 지정·권한 변경은 최상위 관리자만 ----
+            # 두 계층은 첫 경로 조각부터 다르다(api-staff / api-super). 한 계층 안에 좁은 경로를 두면
+            # 톰캣이 // 를 합치는 탓에 /api-staff//staff 가 넓은 라우트를 지나 좁은 경로에 닿을 수 있다.
+            - id: member-service-super
+              uri: ${modu.services.member-service}
+              predicates:
+                - Path=/member-service/api-super/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_SUPER,modu-admin
+                - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+                - RewritePath=/member-service/(?<segment>.*), /$\{segment}
+            - id: member-service-staff
+              uri: ${modu.services.member-service}
+              predicates:
+                - Path=/member-service/api-staff/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_INTERNAL,modu-admin
+                - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+                - RewritePath=/member-service/(?<segment>.*), /$\{segment}
 
-        # config-service 는 설정 서버 주소(CONFIG_SERVER_URI)로 간다. modu.services 에는 없으므로 API 문서 목록에도 안 잡힌다.
-        # 모두 시스템의 config-repo 조회. 설정 서버는 JWT 를 모르므로 여기서 시스템 권한(ROLE_SYSTEM)을 보고 내부 토큰을 붙인다.
-        - id: config-service-admin
-          uri: ${CONFIG_SERVER_URI:http://localhost:8888}
-          predicates:
-            - Path=/config-service/api-admin/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_SYSTEM,modu-admin
-            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
-            - RewritePath=/config-service/(?<segment>.*), /$\{segment}
+            # config-service 는 설정 서버 주소(CONFIG_SERVER_URI)로 간다. modu.services 에는 없으므로 API 문서 목록에도 안 잡힌다.
+            # 모두 시스템의 config-repo 조회. 설정 서버는 JWT 를 모르므로 여기서 시스템 권한(ROLE_SYSTEM)을 보고 내부 토큰을 붙인다.
+            - id: config-service-admin
+              uri: ${CONFIG_SERVER_URI:http://localhost:8888}
+              predicates:
+                - Path=/config-service/api-admin/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_SYSTEM,modu-admin
+                - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+                - RewritePath=/config-service/(?<segment>.*), /$\{segment}
 
-        # 모두 시스템의 '배포' 탭(deploy-service: GHCR 태그 조회, modu_infra 태그 커밋, Argo CD Sync, 롤아웃 진행률).
-        # 시스템 권한(ROLE_SYSTEM)을 보고 내부 토큰을 붙인다. 배포자 기록은 JWT 의 sub(X-Auth-User-Id)로 남긴다.
-        - id: deploy-service-system
-          uri: ${modu.services.deploy-service}
-          predicates:
-            - Path=/deploy-service/api-system/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_SYSTEM,modu-admin
-            - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
-            - RewritePath=/deploy-service/(?<segment>.*), /$\{segment}
+            # 모두 시스템의 '배포' 탭(deploy-service: GHCR 태그 조회, modu_infra 태그 커밋, Argo CD Sync, 롤아웃 진행률).
+            # 시스템 권한(ROLE_SYSTEM)을 보고 내부 토큰을 붙인다. 배포자 기록은 JWT 의 sub(X-Auth-User-Id)로 남긴다.
+            - id: deploy-service-system
+              uri: ${modu.services.deploy-service}
+              predicates:
+                - Path=/deploy-service/api-system/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_SYSTEM,modu-admin
+                - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+                - RewritePath=/deploy-service/(?<segment>.*), /$\{segment}
 
-        # commerce-service(별도 저장소 modu_commerce)도 modu.services 의 주소로 간다.
-        # 내부 토큰 대신 commerce 가 Authorization 헤더의 JWT(aud=modu-admin, ROLE_ADMIN)를 다시 검증한다.
-        - id: commerce-service-admin
-          uri: ${modu.services.commerce-service}
-          predicates:
-            - Path=/commerce-service/api-admin/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
-            - RewritePath=/commerce-service/(?<segment>.*), /$\{segment}
+            # commerce-service(별도 저장소 modu_commerce)도 modu.services 의 주소로 간다.
+            # 내부 토큰 대신 commerce 가 Authorization 헤더의 JWT(aud=modu-admin, ROLE_ADMIN)를 다시 검증한다.
+            - id: commerce-service-admin
+              uri: ${modu.services.commerce-service}
+              predicates:
+                - Path=/commerce-service/api-admin/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_ADMIN,modu-admin
+                - RewritePath=/commerce-service/(?<segment>.*), /$\{segment}
 
-        # ---- WebSocket. HTTP API 계층과 무관하므로 경로 그대로 ----
-        # uri 는 http:// 지만 Upgrade: websocket 요청은 게이트웨이(WebsocketRoutingFilter)가 ws:// 로 바꿔 프록시한다(WebSocketRouteTest).
-        # metadata.websocket 은 API 문서 목록이 '이 라우트는 HTTP API 경로가 아니다'로 알아보는 표시(ApiDocsService).
-        - id: ws-service
-          uri: ${modu.services.ws-service}
-          metadata:
-            websocket: true
-          predicates:
-            - Path=/ws-service/modu-chat/**
-          filters:
-            - AuthorizationHeaderFilter=ROLE_USER,modu-chat
-            - RewritePath=/ws-service/(?<segment>.*), /$\{segment}
+            # ---- WebSocket. HTTP API 계층과 무관하므로 경로 그대로 ----
+            # uri 는 http:// 지만 Upgrade: websocket 요청은 게이트웨이(WebsocketRoutingFilter)가 ws:// 로 바꿔 프록시한다(WebSocketRouteTest).
+            # metadata.websocket 은 API 문서 목록이 '이 라우트는 HTTP API 경로가 아니다'로 알아보는 표시(ApiDocsService).
+            - id: ws-service
+              uri: ${modu.services.ws-service}
+              metadata:
+                websocket: true
+              predicates:
+                - Path=/ws-service/modu-chat/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_USER,modu-chat
+                - RewritePath=/ws-service/(?<segment>.*), /$\{segment}
 
 management:
   endpoints:

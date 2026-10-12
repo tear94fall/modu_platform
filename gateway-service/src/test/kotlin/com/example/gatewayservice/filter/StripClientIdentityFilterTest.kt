@@ -28,7 +28,7 @@ class StripClientIdentityFilterTest {
 
         val captor = ArgumentCaptor.forClass(ServerWebExchange::class.java)
         verify(chain).filter(captor.capture())
-        assertFalse(captor.value.request.headers.containsKey("X-Auth-User-Id"))
+        assertFalse(captor.value.request.headers.containsHeader("X-Auth-User-Id"))
     }
 
     @Test
@@ -41,6 +41,6 @@ class StripClientIdentityFilterTest {
         val captor = ArgumentCaptor.forClass(ServerWebExchange::class.java)
         verify(chain).filter(captor.capture())
         assertSame(ex, captor.value)
-        assertFalse(captor.value.request.headers.containsKey("X-Auth-User-Id"))
+        assertFalse(captor.value.request.headers.containsHeader("X-Auth-User-Id"))
     }
 }

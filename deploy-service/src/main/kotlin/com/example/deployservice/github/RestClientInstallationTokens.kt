@@ -1,7 +1,7 @@
 package com.example.deployservice.github
 
 import com.example.deployservice.api.UpstreamException
-import com.fasterxml.jackson.databind.JsonNode
+import tools.jackson.databind.JsonNode
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpHeaders
 import org.springframework.web.client.RestClient

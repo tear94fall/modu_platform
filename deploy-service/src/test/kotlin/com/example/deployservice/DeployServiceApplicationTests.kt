@@ -11,10 +11,10 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.actuate.health.HealthEndpoint
-import org.springframework.boot.actuate.health.HealthEndpointGroups
-import org.springframework.boot.actuate.health.Status
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
+import org.springframework.boot.health.actuate.endpoint.HealthEndpoint
+import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroups
+import org.springframework.boot.health.contributor.Status
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.springframework.test.web.servlet.MockMvc

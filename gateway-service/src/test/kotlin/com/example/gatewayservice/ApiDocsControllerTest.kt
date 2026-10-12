@@ -4,13 +4,13 @@ import com.example.gatewayservice.apidocs.ApiDocsFetcher
 import com.example.gatewayservice.apidocs.ApiDocsService
 import com.example.gatewayservice.apidocs.ServiceAddresses
 import com.example.gatewayservice.apidocs.WebClientApiDocsFetcher
-import com.fasterxml.jackson.databind.ObjectMapper
+import tools.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.ApplicationContext
 import org.springframework.security.oauth2.jwt.BadJwtException
@@ -93,9 +93,10 @@ class ApiDocsControllerTest {
     @Test
     fun routedIgnoresWebSocketRoutes() {
         fun route(uri: String, path: String, websocket: Boolean = false) = org.springframework.cloud.gateway.route.RouteDefinition().apply {
-            this.uri = URI.create(uri)
-            predicates = listOf(org.springframework.cloud.gateway.handler.predicate.PredicateDefinition("Path=$path"))
-            if (websocket) metadata = mapOf(ApiDocsService.WEBSOCKET_METADATA to true)
+            // Gateway 5 의 RouteDefinition 은 게터가 @Nullable 이라 코틀린에서 val 로 보인다 — 세터를 직접 부른다.
+            setUri(URI.create(uri))
+            setPredicates(mutableListOf(org.springframework.cloud.gateway.handler.predicate.PredicateDefinition("Path=$path")))
+            if (websocket) setMetadata(mapOf(ApiDocsService.WEBSOCKET_METADATA to true))
         }
         // 실제 설정: uri 는 http://(modu.services.ws-service) 지만 metadata websocket: true 라 HTTP 라우트로 세지 않는다.
         assertEquals(false, ApiDocsService.isRouted(listOf(route("http://ws-service:8090", "/ws-service/modu-chat/**", websocket = true)), "ws-service"))
