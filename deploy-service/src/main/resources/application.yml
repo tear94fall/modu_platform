@@ -1,0 +1,74 @@
+server:
+  port: 8900
+  # SIGTERM 뒤 새 요청은 거절하고 처리 중인 요청은 끝까지 보낸다(롤링 배포·재시작 때 요청이 끊기지 않게).
+  shutdown: graceful
+
+spring:
+  application:
+    name: deploy-service
+
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+  config:
+    import: optional:configserver:${CONFIG_SERVER_URI:http://localhost:8888}
+
+  cloud:
+    # 설정 서버를 못 만나면 기본값으로 조용히 뜨지 않고 기동에 실패한다(k8s 가 다시 띄운다). 게이트웨이·메신저·커머스 서비스와 같은 규칙.
+    # 공통(application.yml: modu.internal-api.token, modu.services.*) + 자기 파일(deploy-service.yml: deploy.*)을 받는다.
+    # deploy.* 는 여기 기본값이 없다 — GitHub App 비밀키·Argo CD 토큰({cipher})과 서비스 목록은 config-repo/deploy-service.yml 이 유일한 출처.
+    # GitHub 인증: deploy.github.app.{id,installation-id(선택),private-key} 가 있으면 App 설치 토큰(1시간, 자동 갱신),
+    # 없으면 레거시 deploy.github.token(임시 fallback), 둘 다 없으면 익명. 자세히는 deploy-service/README.md.
+    config:
+      fail-fast: true
+
+  # 배포 이력 DB(modu-platform.deployment). spring.datasource.master(mysql-platform)·replica(mysql-platform-replica)와 jpa.hibernate.ddl-auto(validate,
+  # master 에만 적용)는 config-repo/deploy-service.yml 이 내려준다 — 여기에 datasource 기본값을 두지 않는다(비밀번호는 {cipher}).
+  # RW/RO 라우팅은 RwJpaConfig·RoJpaConfig·JpaDeploymentStore. 스키마는 modu_infra data/mysql/schema/platform.modu-platform.sql.
+  jpa:
+    open-in-view: false
+
+# modu.internal-api.token 은 config-repo 의 application.yml 이 내려준다. 여기 기본값을 두지 않는다 —
+# 비어 있으면 InternalTokenFilter 가 기동을 거부한다(빈 토큰은 누구나 통과시키므로).
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  endpoint:
+    health:
+      # /actuator/health/liveness, /actuator/health/readiness (쿠버네티스 probe 용)
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          # 서비스가 떴고 이력 DB master 에 붙어 있는지 본다(masterDb, MasterDbHealthConfig). 자동 db 는 replica 까지 보므로 넣지 않는다 —
+          # 레플리카가 늦거나 죽어도 서비스가 빠지면 안 된다. GitHub·Argo CD·API 서버는 요청 때 부르는 외부 의존이라 readiness 조건이 아니다.
+          include: readinessState, masterDb
+        liveness:
+          include: livenessState
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_API_DOCS_ENABLED:true}
+    path: /v3/api-docs
+  default-produces-media-type: application/json
+  paths-to-exclude: /actuator/**, /error
+
+# GitHub App 비밀키는 config-repo(공개 저장소)에 두지 않는다 — k8s Secret `deploy-service` 의 GITHUB_APP_PRIVATE_KEY 가
+# 환경변수 DEPLOY_GITHUB_APP_PRIVATE_KEY 로 들어온다. 비어 있으면 앱 경로를 쓰지 않는다(DeployProperties.App.enabled).
+deploy:
+  github:
+    app:
+      private-key: ${DEPLOY_GITHUB_APP_PRIVATE_KEY:}
+  # Argo CD 로컬 계정 deploy 의 API 토큰도 같은 Secret(deploy-service)의 ARGOCD_TOKEN 에서 온다.
+  argocd:
+    token: ${DEPLOY_ARGOCD_TOKEN:}

@@ -52,4 +52,12 @@ spring:
     password: '{cipher}fca9392645c442339c1e59f85f7ba40b9ead2aead8892da8e67e87ef7a0be65d'
 
   datasource:
+    # 4계층으로 옮기기 전 서비스가 쓰는 단일 연결 비밀번호. 모든 서비스가 master/replica 로 옮겨 가면 지운다.
     password: '{cipher}fd96316c87e3190bbdaee42f9ec494ceaae3ea5f13d07d66b680933106f77eb8'
+    # 쓰기(master)는 각 mysql-<x>, 읽기(replica)는 GTID 복제로 받는 mysql-<x>-replica 에 SELECT 전용 계정(modu_ro)으로 붙는다.
+    # url·username 은 서비스마다 달라 modu_chat backend/docker-compose.yml 이 넣는다.
+    # 비밀번호는 modu_infra data/.env 의 MYSQL_ROOT_PASSWORD(master), MESSENGER_RO_PASSWORD(replica) 와 같은 값의 {cipher} 다.
+    master:
+      password: '{cipher}fd96316c87e3190bbdaee42f9ec494ceaae3ea5f13d07d66b680933106f77eb8'
+    replica:
+      password: '{cipher}e44f52ef0e06dd633e989007ecc9262abb46a564dbf3e20a8cda88e44ab31da1af18e28d45fd9f508f38d03eabc03f1f'

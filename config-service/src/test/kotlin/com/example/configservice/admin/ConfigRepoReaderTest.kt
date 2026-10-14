@@ -28,10 +28,8 @@ class ConfigRepoReaderTest {
                   -----BEGIN PRIVATE KEY-----
                   abc
                   -----END PRIVATE KEY-----
-            eureka:
-              client:
-                service-url:
-                  defaultZone: http://discovery-service:8761/eureka
+              services:
+                member-service: http://member-service:8080
             """.trimIndent(),
         )
         repo.resolve("messenger").createDirectories().resolve("messenger.yml").writeText(
@@ -73,7 +71,8 @@ class ConfigRepoReaderTest {
         assertEquals(Protection.SECRET, common.getValue("modu.internal-api.token").protection)
         assertEquals(SecretMasker.MASK, common.getValue("modu.oauth.private-key").value)
         assertEquals("30m", common.getValue("modu.oauth.access-token-ttl").value)
-        assertEquals(Protection.NONE, common.getValue("eureka.client.service-url.defaultZone").protection)
+        assertEquals(Protection.NONE, common.getValue("modu.services.member-service").protection)
+        assertEquals("http://member-service:8080", common.getValue("modu.services.member-service").value)
 
         val messenger = reader().read("messenger/messenger.yml")!!.documents[0].properties.associateBy { it.key }
         assertEquals(Protection.ENCRYPTED, messenger.getValue("spring.datasource.password").protection)

@@ -7,7 +7,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.security.oauth2.jwt.BadJwtException
 import org.springframework.security.oauth2.jwt.Jwt
@@ -62,7 +62,7 @@ class GatewayConfigControllerTest {
     fun adminSeesRoutesInOrderWithAccessDefaultFiltersAndCors() {
         get("system").expectStatus().isOk.expectBody()
             .jsonPath("$.routes[0].id").isEqualTo("auth-service-oauth2")
-            .jsonPath("$.routes[0].uri").isEqualTo("lb://AUTH-SERVICE")
+            .jsonPath("$.routes[0].uri").isEqualTo("http://localhost:1") // ${modu.services.auth-service}
             .jsonPath("$.routes[0].access.type").isEqualTo("PUBLIC")
             .jsonPath("$.routes[0].access.role").doesNotExist()
             .jsonPath("$.routes[0].predicates[0].name").isEqualTo("Path")

@@ -1,0 +1,296 @@
+package com.example.deployservice.deploy
+
+import com.example.deployservice.api.UpstreamException
+import com.example.deployservice.config.DeployProperties
+import com.example.deployservice.gateway.ArgoCdGateway
+import com.example.deployservice.gateway.ArgoResource
+import com.example.deployservice.gateway.GitHubGateway
+import com.example.deployservice.gateway.KubernetesGateway
+import com.example.deployservice.gateway.PodSnapshot
+import org.slf4j.LoggerFactory
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
+import java.util.concurrent.ThreadLocalRandom
+
+/** 폴링 사이 쉬기. 테스트는 시계만 돌리고 실제로 자지 않는 가짜를 넣는다. */
+fun interface Sleeper {
+    fun sleep(duration: Duration)
+
+    companion object {
+        val REAL = Sleeper { Thread.sleep(it.toMillis()) }
+    }
+}
+
+/** 단계별 제한 시간·폴링 간격. */
+data class Timeouts(
+    val argoSync: Duration = Duration.ofMinutes(10),
+    val rollout: Duration = Duration.ofMinutes(10),
+    /** 커밋 직후 Argo 가 새 revision 을 볼 때까지 refresh 를 되풀이하는 최대 시간. */
+    val argoRevisionWait: Duration = Duration.ofSeconds(60),
+    val poll: Duration = Duration.ofSeconds(3),
+    val podPoll: Duration = Duration.ofSeconds(2),
+)
+
+/** 한 단계가 실패했다. 기록에는 그 단계가 FAILED 로 남고 배포 전체가 FAILED 가 된다. */
+class DeployFailure(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+
+/**
+ * 배포 상태 기계. 한 기록을 COMMIT → SYNC → ROLLOUT 순서로 밀고 가며 [DeploymentStore] 에 진행 상황을 쓴다.
+ * 외부 시스템은 전부 인터페이스(GitHub·Argo CD·k8s)로 받아 단위 테스트에서 가짜로 바꾼다.
+ */
+class DeploymentExecutor(
+    private val properties: DeployProperties,
+    private val github: GitHubGateway,
+    private val argo: ArgoCdGateway,
+    private val kubernetes: KubernetesGateway,
+    private val store: DeploymentStore,
+    private val clock: Clock = Clock.systemUTC(),
+    private val sleeper: Sleeper = Sleeper.REAL,
+    private val timeouts: Timeouts = Timeouts(),
+) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
+    companion object {
+        val FAILING_POD_REASONS = setOf("CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull")
+
+        /** GitHub contents PUT 이 sha 가 낡았을 때 돌려주는 상태(409 Conflict, 때로 422). */
+        val SHA_CONFLICT_STATUSES = setOf(409, 422)
+
+        /** kustomization.yaml 커밋(읽기 → 고치기 → PUT) 을 최대 몇 번 해 보는가. sha 충돌 때마다 처음부터 다시 읽는다. */
+        const val MAX_COMMIT_ATTEMPTS = 5
+
+        /** 재시도 사이 쉬는 시간(이 범위에서 무작위) — 파드 둘이 같은 리듬으로 계속 부딪히지 않게. */
+        val COMMIT_BACKOFF_MIN_MS = 100L
+        val COMMIT_BACKOFF_MAX_MS = 400L
+    }
+
+    fun run(id: String) {
+        val record = runCatching { store.get(id) }
+            .getOrElse { log.error("deployment {} could not be read; not running it", id, it); return }
+            ?: return
+        val spec = properties.service(record.service)
+            ?: return fail(id, Step.COMMIT, "알 수 없는 서비스: ${record.service}")
+        try {
+            val revision = commit(record, spec)
+            sync(id, record.service, revision)
+            rollout(id, record.service)
+            write(id) {
+                it.copy(status = DeploymentStatus.SUCCEEDED, step = Step.DONE, percent = Progress.DONE, finishedAt = now())
+            }
+            log.info("deployment {} {} → {} succeeded", id, record.service, record.tag)
+        } catch (e: DeployFailure) {
+            val step = currentStep(id)
+            log.warn("deployment {} failed at {}: {}", id, step, e.message)
+            fail(id, step, e.message ?: "실패")
+        } catch (e: Exception) {
+            val step = currentStep(id)
+            log.error("deployment {} crashed at {}", id, step, e)
+            fail(id, step, "${step} 단계에서 오류: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    // ---- 1. COMMIT -------------------------------------------------------------------------------------------------------
+
+    private data class CommitResult(val revision: String, val commit: CommitView?, val message: String)
+
+    /**
+     * kustomization.yaml 의 newTag 를 바꿔 커밋하고 Sync 에 쓸 revision 을 돌려준다.
+     * 잠그지 않는다 — GitHub contents API 의 파일 sha 가 그대로 낙관적 잠금 토큰이다([commitWithShaRetry]).
+     */
+    private fun commit(record: DeploymentRecord, spec: DeployProperties.ServiceSpec): String {
+        val id = record.id
+        startStep(id, Step.COMMIT, Progress.COMMIT_START)
+        var previousTag: String? = null
+        val result = try {
+            commitWithShaRetry(record, spec) { previousTag = it }
+        } catch (e: Exception) {
+            previousTag?.let { p -> runCatching { store.update(id) { it.copy(previousTag = p) } } }
+            throw e
+        }
+        previousTag?.let { p -> write(id) { it.copy(previousTag = p) } }
+        result.commit?.let { c -> write(id) { it.copy(commit = c) } }
+        finishStep(id, Step.COMMIT, Progress.COMMIT_DONE, result.message)
+        return result.revision
+    }
+
+    /**
+     * 읽고(sha) 고쳐 PUT. 다른 배포(다른 파드일 수도)가 그사이 같은 파일을 고쳤으면 우리가 보낸 sha 가 낡아 GitHub 이 409(때로 422)로 거절한다 —
+     * 그게 낙관적 잠금이다. 그러면 처음부터 **다시 읽어**(남의 변경이 보이는 새 내용·새 sha) 우리 변경만 다시 얹고 PUT 한다.
+     * 최대 [MAX_COMMIT_ATTEMPTS] 번, 사이사이 [COMMIT_BACKOFF_MIN_MS]~[COMMIT_BACKOFF_MAX_MS] 무작위로 쉰다(둘이 같은 리듬으로 계속 부딪히지 않게).
+     */
+    private fun commitWithShaRetry(record: DeploymentRecord, spec: DeployProperties.ServiceSpec, onPreviousTag: (String) -> Unit): CommitResult {
+        val gh = properties.github
+        var conflicts = 0
+        while (true) {
+            val file = runCatching { github.getFile(gh.infraRepo, gh.infraBranch, gh.kustomizationPath) }
+                .getOrElse { throw DeployFailure("kustomization.yaml 읽기 실패: ${it.message}", it) }
+
+            val previousTag = Kustomization.currentTag(file.content, spec.image) ?: "develop"
+            onPreviousTag(previousTag)
+
+            if (previousTag == record.tag) {
+                val head = runCatching { github.branchHead(gh.infraRepo, gh.infraBranch) }
+                    .getOrElse { throw DeployFailure("브랜치 HEAD 조회 실패: ${it.message}", it) }
+                return CommitResult(head.sha, null, "이미 같은 태그")
+            }
+
+            val updated = runCatching { Kustomization.replaceTag(file.content, spec.image, record.tag) }
+                .getOrElse { throw DeployFailure(it.message ?: "kustomization.yaml 수정 실패", it) }
+            val message = "deploy: ${spec.name} → ${record.tag} (by ${record.by})"
+            try {
+                val commit = github.putFile(gh.infraRepo, gh.infraBranch, gh.kustomizationPath, updated, file.sha, message)
+                val note = if (conflicts > 0) " (sha 충돌로 ${conflicts}번 다시 시도)" else ""
+                return CommitResult(commit.sha, CommitView(commit.sha, commit.htmlUrl), "커밋 ${commit.sha.take(7)}$note")
+            } catch (e: Exception) {
+                if (!isShaConflict(e)) throw DeployFailure("커밋 실패: ${e.message}", e)
+                conflicts++
+                if (conflicts >= MAX_COMMIT_ATTEMPTS) {
+                    throw DeployFailure(
+                        "kustomization.yaml 커밋이 sha 충돌로 ${MAX_COMMIT_ATTEMPTS}번 모두 실패했습니다" +
+                            "(다른 배포가 같은 파일을 고치고 있습니다). 잠시 뒤 다시 시도하세요: ${e.message}",
+                        e,
+                    )
+                }
+                log.warn("deployment {} commit sha conflict ({}), re-reading and retrying {}/{}", record.id, e.message, conflicts, MAX_COMMIT_ATTEMPTS - 1)
+                sleeper.sleep(backoff())
+            }
+        }
+    }
+
+    private fun isShaConflict(e: Exception): Boolean = e is UpstreamException && e.httpStatus in SHA_CONFLICT_STATUSES
+
+    private fun backoff(): Duration =
+        Duration.ofMillis(ThreadLocalRandom.current().nextLong(COMMIT_BACKOFF_MIN_MS, COMMIT_BACKOFF_MAX_MS + 1))
+
+    // ---- 2. SYNC ---------------------------------------------------------------------------------------------------------
+
+    private fun sync(id: String, service: String, revision: String) {
+        startStep(id, Step.SYNC, Progress.COMMIT_DONE)
+        val app = properties.argocd.application
+
+        // Argo 가 저장소를 다시 읽어 새 커밋을 볼 때까지(최대 argoRevisionWait) refresh 를 되풀이한다.
+        val seen = waitUntil(timeouts.argoRevisionWait, timeouts.poll) {
+            val state = runCatching { argo.refresh(app) }.getOrElse { throw DeployFailure("Argo CD refresh 실패: ${it.message}", it) }
+            state.syncRevision != null && sameRevision(state.syncRevision, revision)
+        }
+        if (!seen) log.warn("argo cd did not report revision {} within {}; syncing anyway", revision.take(7), timeouts.argoRevisionWait)
+
+        val requestedAt = now()
+        val resource = ArgoResource("apps", "Deployment", service, properties.kubernetes.namespace)
+        runCatching { argo.sync(app, revision, listOf(resource)) }
+            .getOrElse { throw DeployFailure("Argo CD sync 요청 실패: ${it.message}", it) }
+        write(id) { it.copy(percent = Progress.SYNC_REQUESTED) }
+        setStepMessage(id, Step.SYNC, "동기화 중 (${revision.take(7)})")
+
+        var phase: String? = null
+        var opMessage: String? = null
+        val finished = waitUntil(timeouts.argoSync, timeouts.poll) {
+            val state = runCatching { argo.state(app) }.getOrElse { throw DeployFailure("Argo CD 상태 조회 실패: ${it.message}", it) }
+            val op = state.operation ?: return@waitUntil false
+            // 이전 작업의 결과(Succeeded)를 우리 것으로 착각하지 않게: 우리가 요청한 뒤 시작된 작업이거나 revision 이 같은 작업만 본다.
+            val ours = (op.revision != null && sameRevision(op.revision, revision)) ||
+                (op.startedAt != null && !op.startedAt.isBefore(requestedAt.minusSeconds(5)))
+            if (!ours) return@waitUntil false
+            phase = op.phase
+            opMessage = op.message
+            op.terminal
+        }
+        if (!finished) throw DeployFailure("Argo CD 동기화가 ${timeouts.argoSync.toMinutes()}분 안에 끝나지 않았습니다.")
+        if (phase != "Succeeded") throw DeployFailure("Argo CD 동기화 $phase: ${opMessage ?: "(메시지 없음)"}")
+        finishStep(id, Step.SYNC, Progress.SYNC_DONE, "동기화 완료")
+    }
+
+    private fun sameRevision(a: String, b: String): Boolean = a.startsWith(b) || b.startsWith(a)
+
+    // ---- 3. ROLLOUT ------------------------------------------------------------------------------------------------------
+
+    private fun rollout(id: String, service: String) {
+        startStep(id, Step.ROLLOUT, Progress.SYNC_DONE)
+        val done = waitUntil(timeouts.rollout, timeouts.podPoll) {
+            val deployment = runCatching { kubernetes.deployment(service) }
+                .getOrElse { throw DeployFailure("Deployment 조회 실패: ${it.message}", it) }
+                ?: throw DeployFailure("Deployment $service 가 네임스페이스 ${properties.kubernetes.namespace} 에 없습니다.")
+            val pods = runCatching { kubernetes.pods(service) }.getOrElse { emptyList() }
+            val view = RolloutView(
+                desired = deployment.desired,
+                updated = deployment.updated,
+                ready = deployment.ready,
+                available = deployment.available,
+                pods = pods.map { PodView(it.name, it.phase, it.ready, it.reason) },
+            )
+            write(id) { it.copy(rollout = view, percent = Progress.rollout(deployment.ready, deployment.desired)) }
+            setStepMessage(id, Step.ROLLOUT, "준비 ${deployment.ready}/${deployment.desired}")
+
+            pods.firstOrNull { it.fromNewestReplicaSet && it.reason in FAILING_POD_REASONS }?.let { bad ->
+                throw DeployFailure(podFailureMessage(bad))
+            }
+            deployment.rolledOut
+        }
+        if (!done) throw DeployFailure("롤아웃이 ${timeouts.rollout.toMinutes()}분 안에 끝나지 않았습니다.")
+        val ready = runCatching { store.get(id)?.rollout }.getOrNull()
+        finishStep(id, Step.ROLLOUT, Progress.DONE, "준비 ${ready?.ready ?: 0}/${ready?.desired ?: 0}")
+    }
+
+    private fun podFailureMessage(pod: PodSnapshot): String =
+        "파드 ${pod.name} ${pod.reason}" + (pod.message.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
+
+    // ---- 기록 갱신 ---------------------------------------------------------------------------------------------------------
+    // 저장소(DB)가 실패해도 배포 스레드가 조용히 죽지 않게: 진행 중 쓰기 실패는 DeployFailure 로 바꿔 기록을 FAILED 로 닫고,
+    // FAILED 를 쓰는 것마저 실패하면 로그에 남긴다(DB 가 내려간 상황 — 재시작 뒤 StaleDeploymentRecovery 가 RUNNING 을 닫는다).
+
+    /** 진행 상황 한 줄 UPDATE. 저장소 오류는 [DeployFailure] 로 — run() 의 catch 가 FAILED 로 닫는다. */
+    private fun write(id: String, update: (DeploymentRecord) -> DeploymentRecord): DeploymentRecord? =
+        try {
+            store.update(id, update)
+        } catch (e: Exception) {
+            throw DeployFailure("배포 기록 저장 실패(DB): ${e.message ?: e.javaClass.simpleName}", e)
+        }
+
+    private fun currentStep(id: String): Step = runCatching { store.get(id)?.step }.getOrNull() ?: Step.COMMIT
+
+    private fun startStep(id: String, step: Step, percent: Int) {
+        val at = now()
+        write(id) {
+            it.copy(step = step, percent = percent).withStep(step) { s -> s.copy(status = StepStatus.RUNNING, startedAt = at) }
+        }
+    }
+
+    private fun setStepMessage(id: String, step: Step, message: String) {
+        write(id) { it.withStep(step) { s -> s.copy(message = message) } }
+    }
+
+    private fun finishStep(id: String, step: Step, percent: Int, message: String) {
+        val at = now()
+        write(id) {
+            it.copy(percent = percent).withStep(step) { s -> s.copy(status = StepStatus.SUCCEEDED, message = message, finishedAt = at) }
+        }
+    }
+
+    private fun fail(id: String, step: Step, error: String) {
+        val at = now()
+        try {
+            store.update(id) {
+                // 이미 닫힌 기록은 건드리지 않는다 — 자기 자신(deploy-service) 배포 중 새 파드의 StaleDeploymentRecovery 가 SUCCEEDED 로 닫은 뒤
+                // 옛 파드가 종료되며(스레드 인터럽트) 실패를 덮어쓰지 않게.
+                if (it.status != DeploymentStatus.RUNNING) return@update it
+                it.copy(status = DeploymentStatus.FAILED, error = error, finishedAt = at)
+                    .withStep(step) { s -> s.copy(status = StepStatus.FAILED, message = error, startedAt = s.startedAt ?: at, finishedAt = at) }
+            }
+        } catch (e: Exception) {
+            log.error("deployment {} could not be marked FAILED at {} ({}): {}", id, step, error, e.message, e)
+        }
+    }
+
+    /** [check] 가 true 를 돌려줄 때까지 [interval] 마다 되풀이한다. [timeout] 을 넘기면 false. */
+    private fun waitUntil(timeout: Duration, interval: Duration, check: () -> Boolean): Boolean {
+        val deadline = now().plus(timeout)
+        while (true) {
+            if (check()) return true
+            if (!now().isBefore(deadline)) return false
+            sleeper.sleep(interval)
+        }
+    }
+
+    private fun now(): Instant = clock.instant()
+}

@@ -1,0 +1,101 @@
+# deploy-service 전용 설정(모두 시스템 "배포" 탭의 백엔드). 2026-10-06.
+# - GitHub 인증: GitHub App(아래 github.app.id). 비밀키와 Argo CD 토큰은 **여기 없다** — 이 저장소는 공개라서
+#   k8s Secret deploy-service 의 GITHUB_APP_PRIVATE_KEY·ARGOCD_TOKEN 이 환경변수로 들어온다(modu_infra k8s/create-infra-secret.sh).
+# - argocd: Argo CD 로컬 계정 deploy(role:deployer — modu-dev 의 applications get/sync 만, modu_infra k8s/cicd/argocd)로 Sync 를 부른다.
+# - services: 배포 탭에 보이는 서비스. image 는 modu_infra overlays/dev/kustomization.yaml 의 images[].name, name 은 k8s Deployment 이름과 같아야 한다.
+spring:
+  # 배포 이력 DB(modu-platform.deployment, 2026-10-07). JPA RW/RO 분리 — master(mysql-platform)는 쓰기와 진행률 조회(get/update·재시작 복구),
+  # replica(mysql-platform-replica)는 이력 목록·서비스 표(list/latest/latestSucceeded/size). 복제 지연 때문에 진행률은 master 에서만 읽는다.
+  # 계정 platform 의 비밀번호 = Secret infra PLATFORM_DB_USER_PASSWORD, platform_ro = 읽기 전용 계정(replica). 스키마는 DBA 소유
+  # (modu_infra data/mysql/schema/platform.modu-platform.sql) — 앱은 master 만 validate 하고 replica 는 검사하지 않는다(hbm2ddl none).
+  datasource:
+    master:
+      url: jdbc:mysql://mysql-platform:3306/modu-platform?useSSL=false&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      username: platform
+      password: '{cipher}77c4f3aea9a3109c3c8b5cbdf133ef8006bfa1bcf7ff65c7758db6eeca9e75525d1cddc1da43094b2c5e400cd059d9b0b739e7c5ee9c88ac9890040937e8f29b'
+    replica:
+      url: jdbc:mysql://mysql-platform-replica:3306/modu-platform?useSSL=false&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      username: platform_ro
+      password: '{cipher}9a1f49db9630e0ca7f0b2c3a124c769240047cf0acda9c7deefe84cc2663dd79fbbadd482dd184f3d204dc1cdeca0f1e905d78b1aaf1082edeb4b9a883dcfbf1'
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+deploy:
+  github:
+    api-url: https://api.github.com
+    owner: tear94fall
+    infra-repo: modu_infra
+    infra-branch: main
+    kustomization-path: k8s/overlays/dev/kustomization.yaml
+    # GitHub App modu-deploy-tear94fall(App ID 5263639) — modu_infra 에만 설치했고 권한은 contents:write + metadata:read.
+    # 설치 토큰은 1시간짜리라 유출돼도 수명이 짧고, 사람 계정과 묶이지 않는다. 설치 번호는 비워 두면 앱이 조회해서 캐시한다.
+    app:
+      id: '5263639'
+      # private-key 는 여기 두지 않는다 — 이 저장소는 공개다. k8s Secret deploy-service 의 GITHUB_APP_PRIVATE_KEY 가
+      # 환경변수 DEPLOY_GITHUB_APP_PRIVATE_KEY 로 들어온다(modu_infra k8s/create-infra-secret.sh).
+  argocd:
+    url: http://argocd-server.argocd.svc
+    application: modu-dev
+    public-url: http://localhost:8090   # 콘솔의 'Argo CD 열기' 링크(브라우저에서 여는 주소)
+    # token 은 여기 두지 않는다 — 이 저장소는 공개다. k8s Secret deploy-service 의 ARGOCD_TOKEN 이
+    # 환경변수 DEPLOY_ARGOCD_TOKEN 으로 들어온다(modu_infra k8s/create-infra-secret.sh). 권한은 modu-dev 의 get·sync 뿐.
+  kubernetes:
+    namespace: modu
+  store:
+    capacity: 500            # 목록 API 가 돌려주는 최대 건수(DB 에는 전부 남는다)
+  services:
+    - name: config-service
+      repo: modu_platform
+      image: ghcr.io/tear94fall/modu-platform/config-service
+    - name: gateway-service
+      repo: modu_platform
+      image: ghcr.io/tear94fall/modu-platform/gateway-service
+    - name: deploy-service
+      repo: modu_platform
+      image: ghcr.io/tear94fall/modu-platform/deploy-service
+    - name: auth-service
+      repo: modu_chat
+      image: ghcr.io/tear94fall/modu-chat/auth-service
+    - name: member-service
+      repo: modu_chat
+      image: ghcr.io/tear94fall/modu-chat/member-service
+    - name: chat-service
+      repo: modu_chat
+      image: ghcr.io/tear94fall/modu-chat/chat-service
+    - name: chat-store-service
+      repo: modu_chat
+      image: ghcr.io/tear94fall/modu-chat/chat-store-service
+    - name: ws-service
+      repo: modu_chat
+      image: ghcr.io/tear94fall/modu-chat/ws-service
+    - name: push-service
+      repo: modu_chat
+      image: ghcr.io/tear94fall/modu-chat/push-service
+    - name: storage-service
+      repo: modu_chat
+      image: ghcr.io/tear94fall/modu-chat/storage-service
+    - name: profile-service
+      repo: modu_chat
+      image: ghcr.io/tear94fall/modu-chat/profile-service
+    - name: point-service
+      repo: modu_chat
+      image: ghcr.io/tear94fall/modu-chat/point-service
+    - name: schedule-service
+      repo: modu_chat
+      image: ghcr.io/tear94fall/modu-chat/schedule-service
+    - name: commerce-service
+      repo: modu_commerce
+      image: ghcr.io/tear94fall/modu-commerce/commerce-service
+    - name: modu-commerce-web
+      repo: modu_commerce
+      image: ghcr.io/tear94fall/modu-commerce/web
+    - name: modu-admin
+      repo: modu_admin
+      image: ghcr.io/tear94fall/modu-admin/modu-admin
+    - name: modu-system
+      repo: modu_admin
+      image: ghcr.io/tear94fall/modu-admin/modu-system
+    - name: modu-internal
+      repo: modu_admin
+      image: ghcr.io/tear94fall/modu-admin/modu-internal

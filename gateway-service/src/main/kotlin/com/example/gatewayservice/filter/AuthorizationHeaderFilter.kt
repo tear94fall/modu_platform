@@ -40,6 +40,8 @@ class AuthorizationHeaderFilter(
                     val mutated = exchange.request.mutate().header(CLIENT_ID_HEADER, clientId)
                     if (!userId.isNullOrBlank()) {
                         mutated.header(USER_ID_HEADER, userId)
+                        // 접근 로그(RequestContextFilter)가 읽는다. 속성은 mutate 된 exchange 와도 공유된다.
+                        exchange.attributes[RequestContextFilter.USER_ID_ATTR] = userId
                     }
                     chain.filter(exchange.mutate().request(mutated.build()).build())
                 }
