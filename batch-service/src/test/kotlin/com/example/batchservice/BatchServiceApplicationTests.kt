@@ -51,6 +51,8 @@ class BatchServiceApplicationTests(
         mvc.get("/v3/api-docs").andExpect {
             status { isOk() }
             jsonPath("$.info.title") { value("batch-service") }
+            jsonPath("$.paths['/api-system/batch/jobs']") { exists() }
+            jsonPath("$.paths['/api-system/batch/jobs/{id}/run']") { exists() }
             jsonPath("$.paths['/actuator/health']") { doesNotExist() }
         }
     }
@@ -58,5 +60,13 @@ class BatchServiceApplicationTests(
     @Test
     fun `system api needs the internal token`() {
         mvc.get("/api-system/batch/jobs").andExpect { status { isUnauthorized() } }
+        mvc.get("/api-system/batch/jobs") { header("X-Internal-Token", "test-token") }.andExpect {
+            status { isOk() }
+            jsonPath("$.jobs") { isArray() }
+        }
+        mvc.get("/api-system/batch/services") { header("X-Internal-Token", "test-token") }.andExpect {
+            status { isOk() }
+            jsonPath("$.services[?(@.name == 'commerce-service')].url") { value("http://localhost:13") }
+        }
     }
 }

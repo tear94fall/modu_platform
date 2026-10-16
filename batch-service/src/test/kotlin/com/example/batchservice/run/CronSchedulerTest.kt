@@ -37,7 +37,7 @@ class CronSchedulerTest {
     private val locks = mutableListOf<LockConfiguration>()
     /** 락은 늘 잡히는 가짜 — 어떤 이름·기간으로 잠그려 했는지만 기록한다. */
     private val lock: LockingTaskExecutor = DefaultLockingTaskExecutor(LockProvider { config -> locks += config; Optional.of(SimpleLock { }) })
-    private val pool = ThreadPoolTaskScheduler().apply { poolSize = 2; initialize() }
+    private val pool = ThreadPoolTaskScheduler().apply { setPoolSize(2); initialize() }
     private val scheduler = CronScheduler(store, runner, lock, pool, clock)
 
     @AfterEach
