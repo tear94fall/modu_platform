@@ -32,5 +32,5 @@ mysql-platform(`modu-platform`)에 두고, cron 에 맞춰(또는 콘솔의 "지
 
 ## 로그·관찰
 
-- `batch.run` 이벤트(runId·service·job·trigger·status·durationMs·httpStatus·error) — OpenSearch `attributes.event:"batch.run"`.
+- `batch.run` 이벤트(runId·service·job·trigger·outcome(SUCCEEDED|FAILED|TIMEOUT|SKIPPED)·durationMs·httpStatus·error) — OpenSearch `attributes.event:"batch.run"`, 실패만 `and attributes.outcome:"FAILED"`.
 - 회차 id 로 양쪽을 한 번에: `attributes.requestId:"job-…"` (batch-service 의 `batch.run` + 서비스의 `job.run`·SQL·Feign·Kafka).

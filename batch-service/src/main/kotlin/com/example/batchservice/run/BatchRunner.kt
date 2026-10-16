@@ -29,7 +29,8 @@ import java.util.UUID
  * | 연결 실패 | FAILED | 원인 메시지 |
  *
  * 그 잡에 RUNNING 회차가 이미 있으면 서비스를 부르지 않고 SKIPPED 행만 남긴다(cron 이 앞 회차보다 빨리 울렸다).
- * 회차 id 는 `job-` + 16자 — 서비스에 `X-Request-Id` 로 보내므로 OpenSearch 에서 양쪽 로그가 한 id 로 묶인다. 끝나면 `batch.run` 이벤트 한 줄.
+ * 회차 id 는 `job-` + 16자 — 서비스에 `X-Request-Id` 로 보내므로 OpenSearch 에서 양쪽 로그가 한 id 로 묶인다. 끝나면 `batch.run` 이벤트 한 줄
+ * (runId·service·job·trigger·outcome·durationMs·httpStatus·error). 회차 상태는 `outcome` 에 넣는다 — `status` 는 인덱스에서 HTTP 상태(숫자)라 문자열을 넣으면 문서가 거절된다.
  */
 class BatchRunner(
     private val store: BatchJobStore,
@@ -57,7 +58,6 @@ class BatchRunner(
     fun complete(run: BatchJobRun, job: BatchJob): BatchJobRun {
         if (run.status != RunStatus.RUNNING) return run
         MDC.put(MDC_REQUEST_ID, run.id)
-        MDC.put(MDC_JOB, "${job.service}/${job.jobName}")
         val started = System.nanoTime()
         try {
             val outcome = call(job, run.id)
@@ -69,7 +69,6 @@ class BatchRunner(
             event(closed)
             return closed
         } finally {
-            MDC.remove(MDC_JOB)
             MDC.remove(MDC_REQUEST_ID)
         }
     }
@@ -105,7 +104,7 @@ class BatchRunner(
     private fun event(run: BatchJobRun) {
         val args = arrayOf(
             kv("event", EVENT), kv("runId", run.id), kv("service", run.service), kv("job", run.jobName), kv("trigger", run.trigger.name),
-            kv("status", run.status.name), kv("durationMs", run.durationMs), kv("httpStatus", run.httpStatus), kv("error", run.error),
+            kv("outcome", run.status.name), kv("durationMs", run.durationMs), kv("httpStatus", run.httpStatus), kv("error", run.error),
         )
         if (run.status == RunStatus.SUCCEEDED || run.status == RunStatus.SKIPPED) {
             eventLog.info("batch run {} {}/{} {} {}ms", run.id, run.service, run.jobName, run.status, run.durationMs, *args)
@@ -117,7 +116,6 @@ class BatchRunner(
     companion object {
         const val EVENT = "batch.run"
         const val MDC_REQUEST_ID = "requestId"
-        const val MDC_JOB = "job"
         const val RUN_ID_PREFIX = "job-"
 
         fun newRunId(): String = RUN_ID_PREFIX + UUID.randomUUID().toString().replace("-", "").take(16)
