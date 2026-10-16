@@ -160,6 +160,19 @@ class GatewayRoutesTest {
     }
 
     @Test
+    fun batchSystem_routesOnlySystemPathsToBatchService() {
+        val route = firstMatch(HttpMethod.GET, "/batch-service/api-system/batch/jobs")!!
+        assertEquals("batch-service-system", route.id)
+        assertEquals("http://localhost:13", route.uri.toString()) // ${modu.services.batch-service}
+        assertEquals("batch-service-system", routeId(HttpMethod.POST, "/batch-service/api-system/batch/jobs/7/run"))
+        assertEquals("batch-service-system", routeId(HttpMethod.GET, "/batch-service/api-system/batch/runs/job-1"))
+        // 시스템 계층만 연다. 서비스끼리 쓰는 내부 계층·actuator·문서는 라우트가 없다.
+        assertNull(firstMatch(HttpMethod.GET, "/batch-service/api-internal/v1/jobs"))
+        assertNull(firstMatch(HttpMethod.GET, "/batch-service/actuator/health"))
+        assertNull(firstMatch(HttpMethod.GET, "/batch-service/v3/api-docs"))
+    }
+
+    @Test
     fun deploySystem_needsASystemToken() {
         // 토큰 없음·깨진 토큰·채팅 사용자 토큰은 401. (ROLE_SYSTEM 토큰 통과는 AuthorizationHeaderFilterTest 의 역할 검사와 같다.)
         for (token in listOf(null, "broken", "chat-user", "commerce-user")) {
@@ -179,7 +192,7 @@ class GatewayRoutesTest {
         // 라우트 uri 는 전부 modu.services.* 주소(테스트 설정의 localhost:N)거나 config-service 주소다. 레지스트리 스킴은 없다.
         val routes = routeLocator.routes.collectList().block()!!
         assertEquals(true, routes.isNotEmpty())
-        val allowed = (1..12).map { "http://localhost:$it" } + "http://localhost:8888"
+        val allowed = (1..13).map { "http://localhost:$it" } + "http://localhost:8888"
         for (route in routes) {
             assertEquals(true, route.uri.toString() in allowed, "${route.id} → ${route.uri}")
         }
