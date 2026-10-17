@@ -77,7 +77,7 @@ class ApiDocsControllerTest {
         get("", "system").expectStatus().isOk.expectBody()
             .jsonPath("$.services[*].name").isEqualTo(
                 listOf(
-                    "auth-service", "chat-service", "chat-store-service", "commerce-service", "deploy-service", "member-service",
+                    "auth-service", "batch-service", "chat-service", "chat-store-service", "commerce-service", "deploy-service", "member-service",
                     "point-service", "profile-service", "push-service", "schedule-service", "storage-service", "ws-service",
                 ),
             )
@@ -85,6 +85,7 @@ class ApiDocsControllerTest {
             .jsonPath("$.services[?(@.name == 'member-service')].routed").isEqualTo(true)
             .jsonPath("$.services[?(@.name == 'commerce-service')].routed").isEqualTo(true)
             .jsonPath("$.services[?(@.name == 'deploy-service')].routed").isEqualTo(true) // deploy-service-system 라우트(${modu.services.deploy-service})
+            .jsonPath("$.services[?(@.name == 'batch-service')].routed").isEqualTo(true) // batch-service-system 라우트(${modu.services.batch-service})
             .jsonPath("$.services[?(@.name == 'ws-service')].routed").isEqualTo(false) // WebSocket 라우트뿐
             .jsonPath("$.services[?(@.name == 'chat-store-service')].routed").isEqualTo(false)
             .jsonPath("$.services[?(@.name == 'schedule-service')].routed").isEqualTo(false)
