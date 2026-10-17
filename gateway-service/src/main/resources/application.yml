@@ -215,6 +215,17 @@ spring:
                 - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
                 - RewritePath=/deploy-service/(?<segment>.*), /$\{segment}
 
+            # 모두 시스템의 '배치' 탭(batch-service: 잡 정의·주기·수동 실행·실행 이력). 시스템 권한(ROLE_SYSTEM)을 보고 내부 토큰을 붙인다.
+            # 실행자·변경자 기록은 JWT 의 sub(X-Auth-User-Id)로 남긴다.
+            - id: batch-service-system
+              uri: ${modu.services.batch-service}
+              predicates:
+                - Path=/batch-service/api-system/**
+              filters:
+                - AuthorizationHeaderFilter=ROLE_SYSTEM,modu-admin
+                - AddRequestHeader=X-Internal-Token, ${modu.internal-api.token}
+                - RewritePath=/batch-service/(?<segment>.*), /$\{segment}
+
             # commerce-service(별도 저장소 modu_commerce)도 modu.services 의 주소로 간다.
             # 내부 토큰 대신 commerce 가 Authorization 헤더의 JWT(aud=modu-admin, ROLE_ADMIN)를 다시 검증한다.
             - id: commerce-service-admin

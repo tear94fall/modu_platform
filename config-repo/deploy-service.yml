@@ -54,6 +54,9 @@ deploy:
     - name: deploy-service
       repo: modu_platform
       image: ghcr.io/tear94fall/modu-platform/deploy-service
+    - name: batch-service
+      repo: modu_platform
+      image: ghcr.io/tear94fall/modu-platform/batch-service
     - name: auth-service
       repo: modu_chat
       image: ghcr.io/tear94fall/modu-chat/auth-service

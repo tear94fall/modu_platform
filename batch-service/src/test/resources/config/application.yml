@@ -1,0 +1,39 @@
+# 테스트는 설정 서버 없이 뜬다. main 의 fail-fast 때문에 여기서 config 클라이언트를 끈다.
+# classpath:/config/application.yml 은 main 의 application.yml 을 가리지 않고 그 위에 덧붙는다.
+spring:
+  cloud:
+    config:
+      enabled: false
+
+  # 배치 DB 는 H2(MySQL 모드). 실제로는 config-repo/batch-service.yml 이 master(mysql-platform)·replica(mysql-platform-replica) 주소를
+  # 내려주고 ddl-auto 는 validate. 테스트는 master·replica 가 같은 H2 DB 를 본다(복제 대신). ddl-auto: update 는 RW 에만 적용되고 엔티티에서 표를 만든다.
+  datasource:
+    master:
+      url: jdbc:h2:mem:batch;MODE=MySQL;DB_CLOSE_DELAY=-1
+      username: sa
+      password:
+      driver-class-name: org.h2.Driver
+    replica:
+      url: jdbc:h2:mem:batch;MODE=MySQL;DB_CLOSE_DELAY=-1
+      username: sa
+      password:
+      driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    # schema-*.sql 을 Hibernate 가 표를 만든 뒤에 돌린다(batch_job_run 의 생성 열·유니크 키를 덧씌워야 해서).
+    defer-datasource-initialization: true
+  # shedlock 표와 batch_job_run 의 "잡당 RUNNING 하나" 제약은 엔티티가 아니라 여기서 만든다(운영은 DBA 의 platform.modu-platform.sql).
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-shedlock.sql, classpath:schema-batch-constraints.sql
+
+modu:
+  internal-api:
+    token: test-token
+  services:
+    member-service: http://localhost:12
+    commerce-service: http://localhost:13
+    point-service: http://localhost:14

@@ -1,0 +1,28 @@
+# batch-service 전용 설정(모두 시스템 "배치" 탭의 백엔드). 2026-10-17.
+# - 잡 정의·실행 이력·변경 이력은 deploy-service 와 같은 DB(modu-platform)의 batch_job·batch_job_run·batch_job_change, 락은 shedlock.
+#   계정·비밀번호도 deploy-service 와 같다(platform / platform_ro — Secret infra PLATFORM_DB_USER_PASSWORD·PLATFORM_RO_PASSWORD).
+#   스키마는 DBA 소유(modu_infra data/mysql/schema/platform.modu-platform.sql) — 앱은 master 만 validate 하고 replica 는 검사하지 않는다.
+# - 잡의 대상 서비스 주소는 공통 application.yml 의 modu.services.* 에서 푼다(여기엔 없다).
+spring:
+  datasource:
+    master:
+      url: jdbc:mysql://mysql-platform:3306/modu-platform?useSSL=false&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      username: platform
+      password: '{cipher}77c4f3aea9a3109c3c8b5cbdf133ef8006bfa1bcf7ff65c7758db6eeca9e75525d1cddc1da43094b2c5e400cd059d9b0b739e7c5ee9c88ac9890040937e8f29b'
+    replica:
+      url: jdbc:mysql://mysql-platform-replica:3306/modu-platform?useSSL=false&characterEncoding=UTF-8&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      username: platform_ro
+      password: '{cipher}9a1f49db9630e0ca7f0b2c3a124c769240047cf0acda9c7deefe84cc2663dd79fbbadd482dd184f3d204dc1cdeca0f1e905d78b1aaf1082edeb4b9a883dcfbf1'
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+batch:
+  run:
+    connect-timeout-seconds: 5     # 서비스에 붙는 시간
+    default-timeout-seconds: 600   # 잡 정의에 타임아웃이 없을 때 회차 하나를 기다리는 시간
+    max-timeout-seconds: 3600      # 콘솔이 줄 수 있는 타임아웃 상한(월 등급 산정 같은 긴 잡)
+  scheduler:
+    pool-size: 5                   # 동시에 돌 수 있는 회차 수(서로 다른 잡만 — 같은 잡은 하나)
+  store:
+    capacity: 500                  # 목록 API 가 돌려주는 최대 건수(DB 에는 전부 남는다)
