@@ -20,7 +20,7 @@ import java.time.Instant
  * UNIQUE KEY uk_batch_job_run_running (running_job_id)
  * ```
  * 같은 잡의 두 번째 RUNNING INSERT 는 DB 가 거절하고([JpaBatchJobStore.startRunIfNoneRunning] 이 false 로 바꾼다), 회차가 끝나 status 가 바뀌면 값이 저절로 NULL 이 된다.
- * 테스트(H2, ddl-auto update)에서는 그냥 nullable 열이라 유니크 키가 없다 — "DB 가 막아 준다"는 dev MySQL 에서 확인한다.
+ * 테스트(H2)에서도 같다 — `schema-batch-constraints.sql` 이 Hibernate 가 표를 만든 뒤 이 열을 생성 열로 바꾸고 유니크 키를 건다(JpaBatchJobStoreTest 가 거절을 확인한다).
  */
 @Entity
 @Table(name = "batch_job_run", uniqueConstraints = [UniqueConstraint(name = "uk_batch_job_run_running", columnNames = ["running_job_id"])])

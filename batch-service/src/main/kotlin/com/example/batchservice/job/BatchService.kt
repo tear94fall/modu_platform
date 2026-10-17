@@ -51,10 +51,7 @@ class BatchService(
     private val serviceJobs: ServiceJobsGateway,
     private val clock: Clock,
 ) {
-    fun jobs(): List<BatchJobView> {
-        val last = store.lastRuns()
-        return store.jobs().map { BatchJobView.of(it, scheduler.nextRunAt(it), last[it.id]) }
-    }
+    fun jobs(): List<BatchJobView> = store.jobs().map(::view)
 
     fun job(id: Long): BatchJobView = view(find(id))
 
@@ -128,7 +125,7 @@ class BatchService(
 
     private fun find(id: Long): BatchJob = store.job(id) ?: throw ApiException.notFound("job_not_found", "없는 잡입니다: $id")
 
-    private fun view(job: BatchJob): BatchJobView = BatchJobView.of(job, scheduler.nextRunAt(job), store.lastRuns()[job.id])
+    private fun view(job: BatchJob): BatchJobView = BatchJobView.of(job, scheduler.nextRunAt(job), store.lastRun(requireNotNull(job.id)))
 
     private fun timeout(seconds: Int?): Int {
         val t = seconds ?: properties.run.defaultTimeoutSeconds

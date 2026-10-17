@@ -28,13 +28,17 @@ class BatchWiring {
     @Bean
     fun clock(): Clock = Clock.systemUTC()
 
-    /** 회차를 돌리는 스레드 풀. 종료 때 돌고 있는 회차는 끝까지 기다린다(graceful shutdown 20초 안에서). */
+    /**
+     * 회차를 돌리는 스레드 풀(cron 트리거·수동 실행·리컨사일·고아 회차 정리가 같이 쓴다). 종료 때 돌고 있는 회차는 끝까지 기다리고(graceful shutdown 20초 안에서),
+     * 아직 울리지 않은 틱은 버린다 — 죽는 파드가 새 RUNNING 행을 만들지 않게.
+     */
     @Bean(destroyMethod = "shutdown")
     fun batchTaskScheduler(properties: BatchProperties): ThreadPoolTaskScheduler = ThreadPoolTaskScheduler().apply {
         setPoolSize(properties.scheduler.poolSize)
         setThreadNamePrefix("batch-")
         setWaitForTasksToCompleteOnShutdown(true)
         setAwaitTerminationSeconds(20)
+        setExecuteExistingDelayedTasksAfterShutdownPolicy(false)
         initialize()
     }
 
@@ -47,11 +51,12 @@ class BatchWiring {
         BatchRunner(store, caller, modu, properties, clock, objectMapper)
 
     @Bean
-    fun cronScheduler(store: BatchJobStore, runner: BatchRunner, lock: LockingTaskExecutor, pool: ThreadPoolTaskScheduler, clock: Clock): CronScheduler =
-        CronScheduler(store, runner, lock, pool, clock)
+    fun cronScheduler(store: BatchJobStore, runner: BatchRunner, lock: LockingTaskExecutor, pool: ThreadPoolTaskScheduler, clock: Clock, properties: BatchProperties): CronScheduler =
+        CronScheduler(store, runner, lock, pool, clock, properties)
 
     @Bean
-    fun staleRunRecovery(store: BatchJobStore, clock: Clock): StaleRunRecovery = StaleRunRecovery(store, clock)
+    fun staleRunRecovery(store: BatchJobStore, properties: BatchProperties, clock: Clock, pool: ThreadPoolTaskScheduler): StaleRunRecovery =
+        StaleRunRecovery(store, properties, clock, pool)
 
     /** 서비스 잡 목록 중계용 클라이언트(내부 토큰). */
     @Bean

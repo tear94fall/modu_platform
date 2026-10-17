@@ -54,23 +54,46 @@ class BatchRunner(
         return skipped
     }
 
-    /** [start] 가 열어 둔 RUNNING 회차를 서비스를 불러 닫는다. SKIPPED 로 받은 회차는 그대로 돌려준다. */
+    /**
+     * [start] 가 열어 둔 RUNNING 회차를 서비스를 불러 닫는다. SKIPPED 로 받은 회차는 그대로 돌려준다.
+     * 호출이나 저장이 던져도 RUNNING 으로 남기지 않는다 — 남으면 그 잡의 다음 회차가 전부 SKIPPED 가 되어 조용히 멈춘다. 닫기조차 실패하면
+     * [StaleRunRecovery] 가 기한이 지난 뒤 정리한다.
+     */
     fun complete(run: BatchJobRun, job: BatchJob): BatchJobRun {
         if (run.status != RunStatus.RUNNING) return run
         MDC.put(MDC_REQUEST_ID, run.id)
         val started = System.nanoTime()
         try {
-            val outcome = call(job, run.id)
-            val finished = clock.instant()
-            val durationMs = (System.nanoTime() - started) / 1_000_000
-            val closed = store.updateRun(run.id) {
-                it.copy(status = outcome.status, finishedAt = finished, durationMs = durationMs, httpStatus = outcome.httpStatus, result = outcome.result, error = outcome.error)
-            } ?: run.copy(status = outcome.status, finishedAt = finished, durationMs = durationMs, httpStatus = outcome.httpStatus, result = outcome.result, error = outcome.error)
-            event(closed)
-            return closed
+            val outcome = try {
+                call(job, run.id)
+            } catch (e: Exception) {
+                log.error("run {} ({}/{}) blew up while calling the service", run.id, job.service, job.jobName, e)
+                Outcome(RunStatus.FAILED, error = "회차를 끝내지 못했다: $e")
+            }
+            return close(run, outcome, started)
         } finally {
             MDC.remove(MDC_REQUEST_ID)
         }
+    }
+
+    private fun close(run: BatchJobRun, outcome: Outcome, startedNanos: Long): BatchJobRun {
+        val finished = clock.instant()
+        val durationMs = (System.nanoTime() - startedNanos) / 1_000_000
+        fun BatchJobRun.with(o: Outcome) = copy(status = o.status, finishedAt = finished, durationMs = durationMs, httpStatus = o.httpStatus, result = o.result, error = o.error)
+        val closed = try {
+            store.updateRun(run.id) { it.with(outcome) } ?: run.with(outcome)
+        } catch (e: Exception) {
+            log.error("run {} could not be closed as {} — retrying once as FAILED", run.id, outcome.status, e)
+            val failed = Outcome(RunStatus.FAILED, outcome.httpStatus, outcome.result, "회차를 닫지 못했다: $e")
+            try {
+                store.updateRun(run.id) { it.with(failed) } ?: run.with(failed)
+            } catch (e2: Exception) {
+                log.error("run {} still could not be closed — StaleRunRecovery will close it after the deadline", run.id, e2)
+                run.with(failed)
+            }
+        }
+        event(closed)
+        return closed
     }
 
     fun run(job: BatchJob, trigger: RunTrigger, triggeredBy: String?): BatchJobRun = complete(start(job, trigger, triggeredBy), job)
@@ -92,8 +115,7 @@ class BatchRunner(
         }
     }
 
-    private fun timeoutSeconds(job: BatchJob): Int =
-        (if (job.timeoutSeconds > 0) job.timeoutSeconds else properties.run.defaultTimeoutSeconds).coerceAtMost(properties.run.maxTimeoutSeconds)
+    private fun timeoutSeconds(job: BatchJob): Int = effectiveTimeoutSeconds(job, properties.run)
 
     private fun parse(body: String): Map<String, Any?>? =
         runCatching { objectMapper.readValue<Map<String, Any?>>(body) }.getOrNull()
@@ -114,6 +136,14 @@ class BatchRunner(
     }
 
     companion object {
+        /** 잡 정의의 타임아웃(0 이면 기본값)을 상한 안으로. 잡이 지워진 회차([job] null)는 기본값. */
+        fun effectiveTimeoutSeconds(job: BatchJob?, run: BatchProperties.Run): Int =
+            (job?.timeoutSeconds?.takeIf { it > 0 } ?: run.defaultTimeoutSeconds).coerceAtMost(run.maxTimeoutSeconds)
+
+        /** 이 회차가 "아직 돌고 있을 수 있는" 마지막 시각: 시작 + 유효 타임아웃 + 연결 시간 + 여유. 그 뒤에도 RUNNING 이면 진행 상태를 잃은 것이다. */
+        fun deadline(run: BatchJobRun, job: BatchJob?, props: BatchProperties.Run, grace: Duration): java.time.Instant =
+            run.startedAt.plusSeconds((effectiveTimeoutSeconds(job, props) + props.connectTimeoutSeconds).toLong()).plus(grace)
+
         const val EVENT = "batch.run"
         const val MDC_REQUEST_ID = "requestId"
         const val RUN_ID_PREFIX = "job-"

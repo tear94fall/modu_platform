@@ -17,7 +17,11 @@ interface BatchJobStore {
 
     fun job(id: Long): BatchJob?
 
+    /** 콘솔 목록(replica 여도 된다). */
     fun jobs(): List<BatchJob>
+
+    /** 스케줄러용 전체(master — 기동·리컨사일은 복제 지연이 있으면 잡을 빠뜨린다). */
+    fun jobsForScheduling(): List<BatchJob>
 
     fun existsJob(service: String, jobName: String): Boolean
 
@@ -44,8 +48,8 @@ interface BatchJobStore {
     /** 최신순(startedAt 내림차순). 필터는 모두 선택. */
     fun runs(jobId: Long?, service: String?, status: RunStatus?, limit: Int): List<BatchJobRun>
 
-    /** 잡 id → 마지막 회차. */
-    fun lastRuns(): Map<Long, BatchJobRun>
+    /** 그 잡의 마지막 회차(startedAt 기준). */
+    fun lastRun(jobId: Long): BatchJobRun?
 
     /** RUNNING 회차 전부(master — 재시작 복구). */
     fun runningRuns(): List<BatchJobRun>
@@ -70,6 +74,8 @@ class InMemoryBatchJobStore : BatchJobStore {
     override fun job(id: Long): BatchJob? = synchronized(lock) { jobs[id] }
 
     override fun jobs(): List<BatchJob> = synchronized(lock) { jobs.values.sortedWith(compareBy({ it.service }, { it.jobName })) }
+
+    override fun jobsForScheduling(): List<BatchJob> = jobs()
 
     override fun existsJob(service: String, jobName: String): Boolean = synchronized(lock) { jobs.values.any { it.service == service && it.jobName == jobName } }
 
@@ -112,8 +118,8 @@ class InMemoryBatchJobStore : BatchJobStore {
             .toList()
     }
 
-    override fun lastRuns(): Map<Long, BatchJobRun> = synchronized(lock) {
-        runs.values.groupBy { it.batchJobId }.mapValues { (_, list) -> list.maxBy { it.startedAt } }
+    override fun lastRun(jobId: Long): BatchJobRun? = synchronized(lock) {
+        runs.values.filter { it.batchJobId == jobId }.maxWithOrNull(compareBy<BatchJobRun> { it.startedAt }.thenBy { it.id })
     }
 
     override fun runningRuns(): List<BatchJobRun> = synchronized(lock) { runs.values.filter { it.status == RunStatus.RUNNING } }

@@ -76,6 +76,50 @@ class CronSchedulerTest {
         assertTrue(scheduler.registered().isEmpty())
     }
 
+    /** 다른 파드가 바꾼 것(또는 기동 때 replica 가 늦었던 것)은 1분마다 master 와 맞춘다 — 새 잡은 걸고, 바뀐 cron 은 다시 걸고, 지워졌거나 꺼진 잡은 뺀다. */
+    @Test
+    fun `reconcile registers new jobs, re-registers changed crons and unregisters deleted or disabled ones`() {
+        val keep = job("keep")
+        val changing = job("changing")
+        val going = job("going")
+        scheduler.run(DefaultApplicationArguments())
+        assertEquals(setOf(keep.id, changing.id, going.id), scheduler.registered())
+
+        // 이 파드를 거치지 않고 DB 만 바뀜
+        val added = job("added")
+        store.saveJob(store.job(changing.id!!)!!.copy(cron = "0 0 6 * * *"))
+        store.deleteJob(going.id!!)
+        val disabledLater = job("off-later")
+        store.saveJob(store.job(disabledLater.id!!)!!.copy(enabled = false))
+
+        val result = scheduler.reconcile()
+
+        assertEquals(setOf(keep.id, changing.id, added.id), scheduler.registered())
+        assertEquals(Instant.parse("2026-10-17T21:00:00Z"), scheduler.nextRunAt(store.job(changing.id!!)!!), "바뀐 cron(06:00 KST)")
+        assertEquals(1, result.added)
+        assertEquals(1, result.updated)
+        assertEquals(1, result.removed)
+        assertEquals(CronScheduler.Reconciled(0, 0, 0), scheduler.reconcile(), "두 번째는 바뀐 게 없다")
+    }
+
+    @Test
+    fun `startup schedules the periodic reconcile`() {
+        scheduler.run(DefaultApplicationArguments())
+        assertTrue(scheduler.reconcileScheduled())
+    }
+
+    @Test
+    fun `a tick for a job that was disabled meanwhile does nothing and unschedules it`() {
+        val j = job("off")
+        scheduler.register(j)
+        store.saveJob(j.copy(enabled = false))
+
+        scheduler.fire(j.id!!)
+
+        assertTrue(calls.isEmpty())
+        assertTrue(scheduler.registered().isEmpty())
+    }
+
     @Test
     fun `a cron tick runs the job under the job lock with a CRON trigger`() {
         val j = job("point-outbox-relay")

@@ -22,11 +22,13 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
-  # shedlock 표는 엔티티가 아니라 여기서 만든다(운영은 DBA 의 platform.modu-platform.sql).
+    # schema-*.sql 을 Hibernate 가 표를 만든 뒤에 돌린다(batch_job_run 의 생성 열·유니크 키를 덧씌워야 해서).
+    defer-datasource-initialization: true
+  # shedlock 표와 batch_job_run 의 "잡당 RUNNING 하나" 제약은 엔티티가 아니라 여기서 만든다(운영은 DBA 의 platform.modu-platform.sql).
   sql:
     init:
       mode: always
-      schema-locations: classpath:schema-shedlock.sql
+      schema-locations: classpath:schema-shedlock.sql, classpath:schema-batch-constraints.sql
 
 modu:
   internal-api:

@@ -31,6 +31,34 @@ class BatchRunnerTest {
     private val runner = BatchRunner(store, caller, modu, BatchProperties(), clock)
     private val job = store.saveJob(BatchJob(null, "commerce-service", "point-outbox-relay", cron = "0 * * * * *", enabled = true, timeoutSeconds = 120))
 
+    /** 호출이나 저장이 던져도 RUNNING 행을 남기지 않는다 — 남으면 그 잡의 cron 이 SKIPPED 만 찍으며 조용히 멈춘다. */
+    @Test
+    fun `complete closes the run as FAILED when the caller throws`() {
+        val throwing = JobCaller { _, _, _, _ -> throw IllegalStateException("socket exploded") }
+        val run = BatchRunner(store, throwing, modu, BatchProperties(), clock).run(job, RunTrigger.CRON, null)
+
+        assertEquals(RunStatus.FAILED, run.status)
+        assertTrue(run.error!!.contains("socket exploded"), run.error)
+        assertEquals(RunStatus.FAILED, store.run(run.id)!!.status)
+        assertTrue(store.runningRuns().isEmpty())
+    }
+
+    @Test
+    fun `complete closes the run as FAILED when the first update fails and retries the close`() {
+        var failUpdates = 1
+        val flaky = object : com.example.batchservice.job.BatchJobStore by store {
+            override fun updateRun(id: String, update: (BatchJobRun) -> BatchJobRun): BatchJobRun? {
+                if (failUpdates-- > 0) throw org.springframework.dao.QueryTimeoutException("db hiccup")
+                return store.updateRun(id, update)
+            }
+        }
+        val run = BatchRunner(flaky, caller, modu, BatchProperties(), clock).run(job, RunTrigger.CRON, null)
+
+        assertEquals(RunStatus.FAILED, run.status)
+        assertTrue(run.error!!.contains("db hiccup"), run.error)
+        assertTrue(store.runningRuns().isEmpty())
+    }
+
     @Test
     fun `2xx → SUCCEEDED with the service body as result`() {
         val run = runner.run(job, RunTrigger.CRON, null)

@@ -28,9 +28,9 @@ import tools.jackson.module.kotlin.readValue
  *
  * | 메서드 | DB | 이유 |
  * |---|---|---|
- * | saveJob·deleteJob·job·existsJob | master | 쓰기, 그리고 콘솔이 저장 직후 다시 읽는 단건 |
- * | startRunIfNoneRunning·addRun·updateRun·run·runningRuns | master | 회차 쓰기, 수동 실행 뒤 폴링, 재시작 복구 — 복제 지연이 있으면 틀린다 |
- * | jobs·runs·lastRuns·changes | replica | 콘솔 목록. 몇 초 늦어도 되고 master 부하를 덜어 준다 |
+ * | saveJob·deleteJob·job·existsJob·jobsForScheduling | master | 쓰기, 콘솔이 저장 직후 다시 읽는 단건, 스케줄러 기동·리컨사일(잡을 빠뜨리면 안 된다) |
+ * | startRunIfNoneRunning·addRun·updateRun·run·runningRuns | master | 회차 쓰기, 수동 실행 뒤 폴링, 고아 회차 정리 — 복제 지연이 있으면 틀린다 |
+ * | jobs·runs·lastRun·changes | replica | 콘솔 목록. 몇 초 늦어도 되고 master 부하를 덜어 준다 |
  */
 @Component
 class JpaBatchJobStore(
@@ -73,6 +73,9 @@ class JpaBatchJobStore(
 
     @Transactional(readOnly = true)
     override fun existsJob(service: String, jobName: String): Boolean = jobsRw.existsByServiceAndJobName(service, jobName)
+
+    @Transactional(readOnly = true)
+    override fun jobsForScheduling(): List<BatchJob> = jobsRw.findAllByOrderByServiceAscJobNameAsc().map(::toJob)
 
     @Transactional
     override fun deleteJob(id: Long) {
@@ -152,9 +155,9 @@ class JpaBatchJobStore(
         return runsRo.findAll(spec, page).content.map(::toRun)
     }
 
+    /** idx_batch_job_run_job_started 를 타는 한 건 조회 — 회차 표가 커져도 비용이 일정하다. */
     @Transactional(transactionManager = RO_TX, readOnly = true)
-    override fun lastRuns(): Map<Long, BatchJobRun> =
-        runsRo.findLastPerJob().map(::toRun).groupBy { it.batchJobId }.mapValues { (_, list) -> list.maxBy { it.id } }
+    override fun lastRun(jobId: Long): BatchJobRun? = runsRo.findFirstByBatchJobIdOrderByStartedAtDescIdDesc(jobId)?.let(::toRun)
 
     companion object {
         const val RO_TX = "roTransactionManager"

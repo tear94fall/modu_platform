@@ -106,9 +106,24 @@ class JpaBatchJobStoreTest(
         assertEquals(3, store.runs(a.id, null, null, 3).size)
         assertEquals("job-a000000000000007", store.runs(a.id, null, null, 3).first().id)
 
-        val last = store.lastRuns()
-        assertEquals("job-a000000000000007", last[a.id]!!.id)
-        assertEquals("job-b00000000000001", last[b.id]!!.id)
+        assertEquals("job-a000000000000007", store.lastRun(a.id!!)!!.id)
+        assertEquals("job-b00000000000001", store.lastRun(b.id!!)!!.id)
+        assertNull(store.lastRun(12345))
+        assertEquals(listOf("a-job", "b-job"), store.jobsForScheduling().map { it.jobName }, "스케줄러는 master 에서 읽는다")
+    }
+
+    /** "잡당 RUNNING 하나" 의 진짜 보증은 DB 의 생성 열 + 유니크 키다. 사전 확인을 건너뛰고 바로 넣어도 DB 가 거절해야 한다. */
+    @Test
+    fun `the database itself rejects a second RUNNING row for the same job`() {
+        val j = store.saveJob(job())
+        assertTrue(store.startRunIfNoneRunning(run(j, "job-uk00000000000001")))
+
+        val second = BatchJobRunEntity(id = "job-uk00000000000002", batchJobId = j.id!!, service = j.service, jobName = j.jobName, status = RunStatus.RUNNING.name, startedAt = t0)
+        org.junit.jupiter.api.assertThrows<org.springframework.dao.DataIntegrityViolationException> { runs.saveAndFlush(second) }
+
+        store.updateRun("job-uk00000000000001") { it.copy(status = RunStatus.SUCCEEDED, finishedAt = t0.plusSeconds(1)) }
+        runs.saveAndFlush(BatchJobRunEntity(id = "job-uk00000000000003", batchJobId = j.id!!, service = j.service, jobName = j.jobName, status = RunStatus.RUNNING.name, startedAt = t0))
+        assertEquals(1, store.runningRuns().size, "끝난 회차의 running_job_id 는 NULL 이 되어 다음 RUNNING 을 받는다")
     }
 
     @Test

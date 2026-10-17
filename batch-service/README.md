@@ -13,7 +13,8 @@ mysql-platform(`modu-platform`)에 두고, cron 에 맞춰(또는 콘솔의 "지
 2. `batch_job_run` 에 RUNNING 행을 넣는다(`BatchRunner.start`). 그 잡에 RUNNING 이 이미 있으면 생성 열 `running_job_id` 의 유니크 키가 막아 SKIPPED 행만 남긴다.
 3. 서비스를 부른다 — `X-Internal-Token`, `X-Request-Id: <회차 id, job-…>`, 읽기 타임아웃 = 잡의 timeoutSeconds.
 4. 응답으로 닫는다: 2xx → SUCCEEDED(`result_json` = 응답 본문), 409 → SKIPPED, 404·그 밖 → FAILED(`error`), 읽기 타임아웃 → TIMEOUT. `batch.run` 이벤트 한 줄.
-5. 재시작하면 RUNNING 으로 남은 행은 FAILED(`StaleRunRecovery`)로 닫는다 — 서비스 쪽 결과는 OpenSearch 의 `job.run`(같은 requestId)으로 본다.
+5. 기한(시작 + 유효 타임아웃 + 연결 시간 + 1분)이 지나도 RUNNING 인 행은 FAILED 로 닫는다(`StaleRunRecovery`, 기동 때 한 번 + 1분마다). 재시작했다고 전부 닫지 않는 이유는 롤링 배포 중 옛 파드가 아직 정상적으로 돌리고 있을 수 있어서다. 서비스 쪽 결과는 OpenSearch 의 `job.run`(같은 requestId)으로 본다.
+6. 걸린 트리거는 파드 메모리에만 있으므로 기동·대조는 master 에서 읽고, 1분마다 DB 와 대조해(`CronScheduler.reconcile`) 다른 파드가 바꾼 잡·지워진 잡을 맞춘다. 파드가 둘이어도 콘솔의 변경이 양쪽에 반영된다.
 
 ## API (`/api-system/batch`, 게이트웨이 `/batch-service/api-system/**`, ROLE_SYSTEM)
 
