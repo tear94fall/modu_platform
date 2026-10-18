@@ -31,12 +31,12 @@ spring:
 modu:
   cache:
     redis-enabled: true
-  # 2026-10-17 배치 플랫폼 전환: 스케줄 작업 5개(tier-monthly-run·purchase-earn-retry·push-campaigns·point-outbox-relay·point-reconcile)는
+  # 2026-10-17 배치 플랫폼 전환: 스케줄 작업 4개(tier-monthly-run·push-campaigns·point-outbox-relay·point-reconcile)는
   # batch-service(모두 시스템 "배치" 탭)가 /api-internal/v1/jobs/{name}/run 으로 돌린다. commerce 안의 @Scheduled 는 전부 끈다.
+  # 구매 적립 재시도 잡(purchase-earn-retry)은 2026-10-18 에 없앴다 — 적립은 point-outbox-relay 가 보낸다(modu_commerce docs/superpowers/specs/2026-10-18-purchase-earn-outbox-design.md).
   # 한 주 뒤 문제 없으면 commerce 의 스케줄 코드·ShedLock 을 지우고 이 키들도 지운다(설계: docs/superpowers/specs/2026-10-17-batch-platform-design.md §2.4).
   tier:
     scheduler-enabled: false
-    earn-retry-enabled: false
   point:
     outbox:
       relay-enabled: false
