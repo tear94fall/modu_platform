@@ -1,6 +1,18 @@
 # 메신저(modu_chat) 서비스 전용 설정. 각 서비스가 spring.cloud.config.name=messenger,<서비스 이름> 으로 받아 간다.
 # 커머스 서비스에는 내려가지 않는다(datasource 비밀번호 등이 섞이면 안 된다).
 modu:
+  # Kafka 토픽 이름 — 생산자·소비자가 같은 키를 본다. 규칙 <도메인>.<대상-동작>.v<N>(modu_chat 백엔드 README "Kafka 토픽·컨슈머 그룹 이름").
+  # 키는 코드가 아는 이름(바꾸지 말 것), 값이 실제 토픽. 호환 안 되는 스키마 변경은 v2 토픽을 새로 만든다.
+  kafka:
+    topics:
+      chat-message-save: chat.message-save.v1              # ws → chat: 받은 메시지를 저장해라
+      chat-message-broadcast: chat.message-broadcast.v1    # chat → ws: 저장된 메시지를 방에 뿌려라
+      chat-message-read: chat.message-read.v1              # ws → ws: 읽음 팬아웃
+      chat-message-reaction: chat.message-reaction.v1      # ws → ws: 반응 팬아웃
+      chat-room-created: chat.room-created.v1              # chat → ws: 방이 만들어졌다
+      member-update-rollback: member.update-rollback.v1    # storage → member: 회원 변경 되돌려라(사가 보상)
+      storage-upload-rollback: storage.upload-rollback.v1  # profile → storage: 올린 파일 지워라(사가 보상)
+      chat-cdc: modu.modu-chat.chat                        # Debezium → chat-store: 이름은 커넥터(topic.prefix.db.table)가 정한다
   oauth:
     # auth-service(발급자) 전용. 검증 쪽이 보는 issuer·jwks-uri·audiences 는 공통 application.yml 에 있다.
     access-token-ttl: 1h
