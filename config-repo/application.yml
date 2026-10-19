@@ -30,7 +30,6 @@ modu:
     storage-service: http://storage-service:9999
     profile-service: http://profile-service:8880
     point-service: http://point-service:9600
-    schedule-service: http://schedule-service:8110
     commerce-service: http://commerce-service:8200
     deploy-service: http://deploy-service:8900
     batch-service: http://batch-service:8910
