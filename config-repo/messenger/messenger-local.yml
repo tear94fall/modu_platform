@@ -10,7 +10,6 @@ modu:
     storage-service: http://localhost:9999
     profile-service: http://localhost:8880
     point-service: http://localhost:9600
-    schedule-service: http://localhost:8110
     commerce-service: http://localhost:8200
 
 spring:

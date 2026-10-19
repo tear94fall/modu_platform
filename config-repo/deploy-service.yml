@@ -84,9 +84,6 @@ deploy:
     - name: point-service
       repo: modu_chat
       image: ghcr.io/tear94fall/modu-chat/point-service
-    - name: schedule-service
-      repo: modu_chat
-      image: ghcr.io/tear94fall/modu-chat/schedule-service
     - name: commerce-service
       repo: modu_commerce
       image: ghcr.io/tear94fall/modu-commerce/commerce-service
