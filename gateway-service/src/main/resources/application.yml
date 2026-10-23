@@ -7,11 +7,10 @@ modu:
   # 서비스 주소(modu.services.<이름>: http://<호스트>:<포트>)는 config-repo 의 application.yml 이 내려준다(모든 서비스 공통).
   # 라우트 uri 와 API 문서 조회가 모두 그 값을 쓴다. compose 에선 컨테이너 이름, k8s 에선 같은 이름·포트의 Service.
   # 시스템 콘솔 'API 문서'(ApiDocsController). 목록은 라우트 uri 가 가리키는 modu.services 서비스 + 아래 서비스(이름 → 주소).
-  # 라우트가 없는 서비스(chat-store, schedule)는 문서만 보이고 Try it out 은 꺼진다.
+  # 라우트가 없는 서비스(chat-store)는 문서만 보이고 Try it out 은 꺼진다. (schedule-service 는 2026-10-19 삭제 — 참조가 남아 있으면 기동 실패)
   api-docs:
     extra-services:
       chat-store-service: ${modu.services.chat-store-service}
-      schedule-service: ${modu.services.schedule-service}
   oauth:
     # config-repo 가 덮어쓴다. 게이트웨이는 컨테이너 이름으로 auth-service 의 JWKS 를 직접 읽는다.
     issuer: ${MODU_OAUTH_ISSUER:http://192.168.0.3:8000/auth-service}
