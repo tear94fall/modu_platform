@@ -55,7 +55,8 @@ class ConfigServerAuthFilter(token: String) : OncePerRequestFilter() {
 
     override fun shouldNotFilter(request: HttpServletRequest): Boolean {
         val path = request.requestURI
-        return path == "/actuator/info" || path == "/actuator/health" || path.startsWith("/actuator/health/")
+        // /actuator/prometheus 도 연다 — Prometheus 는 X-Internal-Token 을 못 넣고, 지표에는 비밀이 없다(설정 값은 안 나간다).
+        return path == "/actuator/info" || path == "/actuator/health" || path.startsWith("/actuator/health/") || path == "/actuator/prometheus"
     }
 
     override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {

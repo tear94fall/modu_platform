@@ -67,4 +67,10 @@ class ConfigFetchGuardTest(@Autowired private val mvc: MockMvc) {
         mvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk)
         mvc.perform(get("/actuator/health/liveness")).andExpect(status().isOk)
     }
+
+    @Test
+    fun `prometheus metrics stay open`() {
+        // Prometheus 스크레이프는 헤더를 못 넣는다. 지표에는 설정 값이 없어 열어 둔다(Grafana 상태판).
+        mvc.perform(get("/actuator/prometheus")).andExpect(status().isOk)
+    }
 }
