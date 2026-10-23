@@ -78,7 +78,7 @@ class ApiDocsControllerTest {
             .jsonPath("$.services[*].name").isEqualTo(
                 listOf(
                     "auth-service", "batch-service", "chat-service", "chat-store-service", "commerce-service", "deploy-service", "member-service",
-                    "point-service", "profile-service", "push-service", "schedule-service", "storage-service", "ws-service",
+                    "point-service", "profile-service", "push-service", "storage-service", "ws-service",
                 ),
             )
             .jsonPath("$.services[0].title").isEqualTo("auth-service")
@@ -88,7 +88,6 @@ class ApiDocsControllerTest {
             .jsonPath("$.services[?(@.name == 'batch-service')].routed").isEqualTo(true) // batch-service-system 라우트(${modu.services.batch-service})
             .jsonPath("$.services[?(@.name == 'ws-service')].routed").isEqualTo(false) // WebSocket 라우트뿐
             .jsonPath("$.services[?(@.name == 'chat-store-service')].routed").isEqualTo(false)
-            .jsonPath("$.services[?(@.name == 'schedule-service')].routed").isEqualTo(false)
     }
 
     @Test
@@ -115,7 +114,6 @@ class ApiDocsControllerTest {
         assertEquals("http://localhost:2", targets["member-service"])
         assertEquals("http://localhost:5", targets["ws-service"]) // WebSocket 라우트의 주소로 http 문서를 받는다
         assertEquals("http://localhost:4", targets["chat-store-service"]) // extra-services → ${modu.services.chat-store-service}
-        assertEquals("http://localhost:10", targets["schedule-service"])
         // commerce-service 는 extra-services 가 아니라 라우트(${modu.services.commerce-service})에서 잡힌다.
         assertEquals("http://localhost:11", targets["commerce-service"])
         // config-service 라우트(http://localhost:8888)는 modu.services 에 없으니 목록에 없다. 게이트웨이 자신도.
