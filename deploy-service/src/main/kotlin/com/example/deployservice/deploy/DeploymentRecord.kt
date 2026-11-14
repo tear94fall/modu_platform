@@ -44,6 +44,10 @@ data class DeploymentRecord(
     val rollout: RolloutView? = null,
     val commit: CommitView? = null,
     val error: String? = null,
+    /** Temporal 워크플로 실행 id(deployment.workflow_run_id). 워크플로 ID 는 `deploy-<service>`([TemporalLinks]). 옛 기록·스레드 시절 기록은 null. */
+    val workflowRunId: String? = null,
+    /** 콘솔 "Temporal 에서 보기" 링크 — 저장하지 않는다. 서비스 계층이 [TemporalLinks.decorate] 로 채운다(실행 id 가 없으면 null). */
+    val workflowUrl: String? = null,
 ) {
     fun withStep(name: Step, update: (StepRecord) -> StepRecord): DeploymentRecord =
         copy(steps = steps.map { if (it.name == name) update(it) else it })

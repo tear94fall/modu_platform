@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Configuration
  * - kubernetes: Deployment 가 있는 네임스페이스.
  * - services: 배포 탭에 보이는 서비스. name = k8s Deployment 이름, image = kustomization images[].name.
  * - store: 배포 이력 목록(list)이 한 번에 돌려주는 최대 건수(DB 에는 전부 남는다).
+ * - temporal: 배포 워크플로의 네임스페이스·태스크 큐·콘솔 "Temporal 에서 보기" 링크용 UI 주소(2026-11-14). 서버 주소는 spring.temporal.connection.target.
  */
 @ConfigurationProperties(prefix = "deploy")
 data class DeployProperties(
@@ -20,6 +21,7 @@ data class DeployProperties(
     val kubernetes: Kubernetes = Kubernetes(),
     val services: List<ServiceSpec> = emptyList(),
     val store: Store = Store(),
+    val temporal: Temporal = Temporal(),
 ) {
     /**
      * [app] 이 있으면(id 가 비어 있지 않으면) GitHub App 설치 토큰으로 인증한다 — 한 시간이면 끝나고 설치된 저장소에만 닿는다.
@@ -81,6 +83,12 @@ data class DeployProperties(
     data class ServiceSpec(val name: String, val repo: String, val image: String)
 
     data class Store(val capacity: Int = 500)
+
+    /**
+     * Temporal 워크플로 설정. 워크플로 ID 는 `deploy-<service>`(TemporalLinks). [taskQueue] 는 로컬에서 서비스를 띄울 때 `deploy-local` 처럼
+     * 바꿔 dev 파드의 워커와 큐를 나눠 먹지 않게 한다. [publicUrl] 은 맥 루프백 전용 Temporal UI(overlays/dev temporal-ui-lb 8233).
+     */
+    data class Temporal(val namespace: String = "platform", val taskQueue: String = "deploy", val publicUrl: String = "http://localhost:8233")
 
     fun service(name: String): ServiceSpec? = services.firstOrNull { it.name == name }
 }

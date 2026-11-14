@@ -42,6 +42,10 @@ dependencies {
     runtimeOnly("org.bouncycastle:bcpkix-jdk18on:1.86")
     // 로그를 한 줄 JSON 으로(logback-spring.xml 의 LogstashEncoder + StructuredArguments)
     implementation("net.logstash.logback:logstash-logback-encoder:8.1")
+    // 배포 플로우 = Temporal 워크플로(docs/superpowers/specs/2026-11-14-deploy-temporal-workflow-design.md). SDK 는 자체 Jackson 2(com.fasterxml)를 쓴다 —
+    // Boot 4 의 Jackson 3(tools.jackson)과 공존. Kotlin data class 페이로드는 jackson-module-kotlin 2.x(Boot 4 BOM 이 버전 관리, config/TemporalConverters).
+    implementation("io.temporal:temporal-spring-boot-starter:1.40.0")
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin")   // temporal-kotlin 은 안 쓴다(KotlinModule 생성자 불일치) — TemporalConverters
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 
@@ -53,6 +57,8 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-jdbc-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation("org.mockito.kotlin:mockito-kotlin:6.4.0")
+    // 워크플로 단위 테스트(TestWorkflowEnvironment, 시간 건너뛰기) + 컨텍스트 테스트의 인메모리 Temporal(spring.temporal.test-server.enabled)
+    testImplementation("io.temporal:temporal-testing:1.40.0")
     // 테스트 DB(H2, MODE=MySQL) — src/test/resources/config/application.yml
     testRuntimeOnly("com.h2database:h2")
 }

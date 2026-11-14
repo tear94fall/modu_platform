@@ -99,11 +99,33 @@ PKCS#1 을 그대로 넣으면 **기동 때 바로** 이 변환 명령을 적은
 
 GHCR 조회에는 GitHub 자격을 **붙이지 않는다** — 레지스트리 클라이언트는 따로 만든다.
 
+## Temporal 워크플로 (2026-11-14)
+
+배포 한 건은 Temporal 워크플로 **`deploy-<service>`**(네임스페이스 `platform`, 태스크 큐 `deploy`)의 실행 하나다 — `deploy/workflow/`.
+COMMIT → SYNC → ROLLOUT 단계와 문구는 예전 스레드 실행기와 같지만, 기다림은 Temporal 타이머이고 상태는 Temporal 이 들고 있어
+deploy-service 파드가 죽어도(자기 자신을 배포할 때 포함) 새 파드의 워커가 이어서 끝낸다. 재시작 복구 코드는 없다.
+
+- 게이트웨이(GitHub·Argo CD·k8s)는 액티비티(`DeployActivitiesImpl`)가 감싼다. sha 충돌은 재시도 가능 실패(5회), 그 외는 재시도 안 함. 기록(MySQL `deployment`)은 로컬 액티비티.
+- 수문장 둘: `deployment` 유니크 키(running_service) → 워크플로 ID(`DeploymentStarter`). **고아 RUNNING 기록**(워크플로가 기록을 못 닫고 사라진 경우 —
+  타임아웃·terminate·DB 다운·스레드 시절 기록)은 다음 배포 시작 때 Temporal 에 실행 상태를 물어 없으면 FAILED(`워크플로가 없어 닫음…`)로 닫고 진행한다.
+- 기록의 `workflowRunId`(DDL 2026-11-15) 로 콘솔이 "Temporal 에서 보기" 링크(`deploy.temporal.public-url`, 맥 127.0.0.1:8233 전용 UI)를 만든다.
+- 헬스 `temporal` 은 `/actuator/health` 에만 — readiness 아님. Temporal 이 끊기면 배포 시작만 503 `temporal_unavailable`.
+- 설정(config-repo `deploy-service.yml`): `spring.temporal.connection.target`(`temporal:7233`), `spring.temporal.namespace`, `deploy.temporal.{namespace,task-queue,public-url}`.
+- **맥에서 띄울 때**: `TEMPORAL_TARGET=127.0.0.1:7233`(overlays/dev `temporal-lb`) 와 **`TEMPORAL_TASK_QUEUE=deploy-local`** — dev 파드의 워커와 큐를 나눠 먹지 않게.
+  로컬 워커로 시작한 배포는 로컬 프로세스를 끄면 고아가 되고, 다음 배포 시작 때 닫힌다.
+- 페이로드는 Jackson 2 + KotlinModule(`TemporalConverters`). `temporal-kotlin` 은 쓰지 않는다(Boot 4 BOM 의 jackson-module-kotlin 과 생성자 불일치).
+- **워크플로 코드를 바꿀 때(운영 규칙)**: 자기 자신을 배포하면 새 파드가 진행 중인 `deploy-deploy-service` 실행을 **재생**한다. `DeployWorkflowImpl` 의
+  액티비티 호출 순서·타이머·분기를 바꿨다면 (a) `Workflow.getVersion` 으로 옛 실행과 새 실행을 갈라 두거나, (b) 배포 전에 `deploy-deploy-service` 가
+  실행 중이 아닌지(배포 탭 서비스 표·Temporal UI) 확인한다. 비결정성이 나면 `TemporalConfig.workflowImplementationCustomizer` 가 워크플로를 바로 실패로
+  끝내고(30분 스피너 대신), 그 기록은 다음 배포 시작 때 고아 정리가 닫는다. 3단계(카나리 Signal)가 첫 사례다.
+- 고아 정리의 레이스 보호: runId 가 없는 RUNNING 기록은 2분(`ORPHAN_GRACE`) 동안 "시작 진행 중" 으로 보고 닫지 않는다(두 운영자가 동시에 눌렀을 때 살아 있는 배포를 FAILED 로 오판하지 않게).
+
 ## 테스트
 
 ```sh
 cd deploy-service && ./gradlew test
 ```
 
-네트워크·클러스터 없이 돈다. GitHub·GHCR 호출은 `MockRestServiceServer`, 이력 DB 는 H2, k8s 는 가짜 게이트웨이다.
+네트워크·클러스터 없이 돈다. GitHub·GHCR 호출은 `MockRestServiceServer`, 이력 DB 는 H2, k8s 는 가짜 게이트웨이, Temporal 은 인메모리
+(`spring.temporal.test-server.enabled`, 워크플로 테스트는 `TestWorkflowEnvironment` 의 시간 건너뛰기).
 App JWT 테스트는 RSA 키를 테스트 안에서 만들어 서명을 짝 공개키로 검증한다.

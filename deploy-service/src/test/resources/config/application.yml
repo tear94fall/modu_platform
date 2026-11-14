@@ -24,6 +24,14 @@ spring:
       ddl-auto: update
     open-in-view: false
 
+  # 인메모리 Temporal(temporal-testing) — 컨텍스트 테스트가 실제 서버 없이 뜨고 워커도 거기 붙는다.
+  temporal:
+    test-server:
+      enabled: true
+    namespace: platform
+    workers-auto-discovery:
+      packages: com.example.deployservice.deploy.workflow
+
 modu:
   internal-api:
     token: test-token
@@ -45,6 +53,10 @@ deploy:
     token: test-argocd-token
   kubernetes:
     namespace: modu
+  temporal:
+    namespace: platform
+    task-queue: deploy
+    public-url: http://localhost:2
   services:
     - name: point-service
       repo: modu_chat

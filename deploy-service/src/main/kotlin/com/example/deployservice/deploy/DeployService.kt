@@ -35,7 +35,10 @@ data class ServiceView(
 
 data class ArgoCdView(val application: String, val url: String)
 
-data class ServicesResponse(val services: List<ServiceView>, val argocd: ArgoCdView)
+/** 콘솔 "Temporal 에서 보기" 의 뿌리(맥 루프백 전용 UI)와 네임스페이스. 기록별 링크는 DeploymentRecord.workflowUrl. */
+data class TemporalView(val namespace: String, val url: String)
+
+data class ServicesResponse(val services: List<ServiceView>, val argocd: ArgoCdView, val temporal: TemporalView)
 
 data class TagView(
     val tag: String,
@@ -82,7 +85,7 @@ class DefaultDeployService(
     private val registry: ContainerRegistryGateway,
     private val kubernetes: KubernetesGateway,
     private val store: DeploymentStore,
-    private val runner: DeploymentRunner,
+    private val starter: DeploymentStarter,
     private val clock: Clock = Clock.systemUTC(),
 ) : DeployService {
 
@@ -116,7 +119,11 @@ class DefaultDeployService(
                 lastDeployment = store.latest(spec.name)?.let { LastDeploymentView(it.id, it.tag, it.by, it.byId, it.finishedAt, it.status) },
             )
         }
-        return ServicesResponse(services, ArgoCdView(properties.argocd.application, properties.argocd.applicationUrl()))
+        return ServicesResponse(
+            services,
+            ArgoCdView(properties.argocd.application, properties.argocd.applicationUrl()),
+            TemporalView(properties.temporal.namespace, properties.temporal.publicUrl),
+        )
     }
 
     override fun tags(service: String): TagsResponse {
@@ -143,8 +150,8 @@ class DefaultDeployService(
         if (!Tags.isDeployable(tag)) {
             throw ApiException.badRequest("invalid_tag", "태그는 develop-<sha7> 또는 master-<sha7> 모양이어야 합니다: $tag")
         }
-        // 빠른 사전 확인(GHCR 조회 전에). 최종 판단은 runner.start 의 잠금 안 확인.
-        if (store.hasRunning(service)) throw ApiException.conflict("deploy_in_progress", "$service 는 이미 배포 중입니다.")
+        // "이미 배포 중" 판단은 여기서 하지 않는다 — starter.start 가 DB 유니크 키 → 워크플로 상태 순으로 보고, 워크플로가 사라진 고아 RUNNING 기록은 닫고 진행한다.
+        // 여기서 hasRunning 으로 먼저 409 를 내면 그 조정이 영원히 돌지 않는다(2026-11-15 dev 에서 확인).
         // GHCR 에 있는 태그인지(선택 검사, 날짜는 읽지 않는다). GHCR 조회 자체가 실패하면 막지 않고 넘어간다 — 커밋·Sync 가 실패로 드러난다.
         runCatching { registry.tagNames(packageName(spec.image)) }
             .onSuccess { tags ->
@@ -152,7 +159,7 @@ class DefaultDeployService(
             }
             .onFailure { log.warn("ghcr check skipped for {}: {}", spec.image, it.message) }
         val record = DeploymentRecord(id = newId(), service = service, tag = tag, by = by, byId = byId, startedAt = clock.instant())
-        return DeploymentStartedResponse.of(runner.start(record))
+        return DeploymentStartedResponse.of(starter.start(record, spec.image))
     }
 
     override fun rollback(service: String, by: String, byId: String?): DeploymentStartedResponse {
@@ -168,10 +175,14 @@ class DefaultDeployService(
     }
 
     override fun deployment(id: String): DeploymentRecord =
-        store.get(id) ?: throw ApiException.notFound("deployment_not_found", "배포 기록이 없습니다: $id")
+        store.get(id)?.let { TemporalLinks.decorate(properties.temporal, it) }
+            ?: throw ApiException.notFound("deployment_not_found", "배포 기록이 없습니다: $id")
 
     override fun deployments(service: String?, limit: Int): DeploymentsResponse =
-        DeploymentsResponse(store.list(service?.takeIf { it.isNotBlank() }, limit.coerceIn(1, properties.store.capacity.coerceAtLeast(1))))
+        DeploymentsResponse(
+            store.list(service?.takeIf { it.isNotBlank() }, limit.coerceIn(1, properties.store.capacity.coerceAtLeast(1)))
+                .map { TemporalLinks.decorate(properties.temporal, it) },
+        )
 
     // ---- helpers ---------------------------------------------------------------------------------------------------------
 

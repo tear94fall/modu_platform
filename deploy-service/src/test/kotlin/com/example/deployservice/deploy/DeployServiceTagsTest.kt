@@ -28,7 +28,7 @@ class DeployServiceTagsTest {
     private val kubernetes = FakeKubernetes()
     private val store = InMemoryDeploymentStore()
     private val clock = MutableClock()
-    private val service = DefaultDeployService(props, github, registry, kubernetes, store, DeploymentRunner(store, DeploymentExecutor(props, github, FakeArgo(), kubernetes, store, clock)), clock)
+    private val service = DefaultDeployService(props, github, registry, kubernetes, store, DeploymentStarter(org.mockito.kotlin.mock(), store, clock), clock)
 
     private fun version(tag: String, at: String) = ContainerVersion(listOf(tag), Instant.parse(at))
 

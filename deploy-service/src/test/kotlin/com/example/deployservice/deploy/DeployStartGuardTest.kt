@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
@@ -69,19 +70,20 @@ class DeployStartGuardTest {
     }
 
     @Test
-    fun `the runner turns that rejection into 409 deploy_in_progress`() {
+    fun `the starter turns that rejection into 409 deploy_in_progress`() {
         noneRunning()
         whenever(rw.saveAndFlush(any<DeploymentEntity>())).thenThrow(
             DataIntegrityViolationException("Duplicate entry 'point-service' for key 'deployment.uk_deployment_running_service'"),
         )
-        val runner = DeploymentRunner(store, mock())
+        val temporal: TemporalGateway = mock()
+        whenever(temporal.status(any(), anyOrNull())).thenReturn(io.temporal.api.enums.v1.WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING)
+        val starter = DeploymentStarter(temporal, store)
 
-        val e = assertThrows<ApiException> { runner.start(record("dep-2")) }
+        val e = assertThrows<ApiException> { starter.start(record("dep-2"), "ghcr.io/x/y") }
 
         assertEquals("deploy_in_progress", e.error)
         assertEquals(409, e.status.value())
-        assertFalse(runner.isRunningLocally("point-service")) // 예약조차 되지 않았다
-        runner.shutdown()
+        verify(temporal, never()).start(any(), any()) // 워크플로는 시작조차 되지 않았다
     }
 
     @Test
@@ -121,16 +123,17 @@ class DeployStartGuardTest {
         // 여덟 INSERT 가 모두 동시에 저장소 안에 들어와야 통과한다. 어딘가에서 직렬화되면 장벽이 안 모여 TimeoutException → 시작 실패.
         val barrier = CyclicBarrier(services.size)
         whenever(rw.saveAndFlush(any<DeploymentEntity>())).thenAnswer { barrier.await(10, TimeUnit.SECONDS); it.arguments[0] }
-        val runner = DeploymentRunner(store, mock())
+        val temporal: TemporalGateway = mock()
+        whenever(temporal.start(any(), any())).thenReturn("run-1")
+        val starter = DeploymentStarter(temporal, store)
         val pool = Executors.newFixedThreadPool(services.size)
         try {
             val results = services.mapIndexed { i, service ->
-                pool.submit { runner.start(record("dep-$i", service)) }
+                pool.submit { starter.start(record("dep-$i", service), "ghcr.io/x/y") }
             }.map { runCatching { it.get(20, TimeUnit.SECONDS) } }
 
             assertEquals(services.size, results.count { it.isSuccess }, results.toString())
         } finally {
-            runner.shutdown()
             pool.shutdownNow()
         }
     }

@@ -18,6 +18,7 @@ class ApiException(val status: HttpStatus, val error: String, message: String) :
         fun notFound(error: String, message: String) = ApiException(HttpStatus.NOT_FOUND, error, message)
         fun conflict(error: String, message: String) = ApiException(HttpStatus.CONFLICT, error, message)
         fun upstream(error: String, message: String) = ApiException(HttpStatus.BAD_GATEWAY, error, message)
+        fun unavailable(error: String, message: String) = ApiException(HttpStatus.SERVICE_UNAVAILABLE, error, message)
     }
 }
 

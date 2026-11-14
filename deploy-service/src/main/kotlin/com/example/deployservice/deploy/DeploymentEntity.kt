@@ -71,6 +71,10 @@ class DeploymentEntity(
     @Column(name = "commit_url", length = 255)
     var commitUrl: String? = null,
 
+    /** Temporal 워크플로 실행 id(2026-11-15 추가, NULL 허용 — modu_infra schema/changes/2026-11-15-deployment-workflow-run-id.sql). */
+    @Column(name = "workflow_run_id", length = 64)
+    var workflowRunId: String? = null,
+
     /** List<StepRecord> 를 JSON 으로. JdbcTypeCode(JSON) 이라 MySQL 은 cast(? as json), H2 는 ? format json 으로 묶인다(문자열은 그대로 통과). */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "steps_json", nullable = false, columnDefinition = "json")

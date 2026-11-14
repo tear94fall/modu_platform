@@ -22,6 +22,9 @@ interface DeploymentStore {
     /** 그 서비스에 RUNNING 기록이 있는가(운영은 master 에서 읽는다). */
     fun hasRunning(service: String): Boolean
 
+    /** 그 서비스의 RUNNING 기록들(운영은 master — 고아 정리가 방금 남은 행을 놓치면 안 된다). 보통 0 또는 1건. */
+    fun running(service: String): List<DeploymentRecord>
+
     fun get(id: String): DeploymentRecord?
 
     /** [id] 의 기록을 [update] 로 바꾼 결과를 넣고 돌려준다. 없으면 null. 읽기-바꾸기-쓰기가 한 단위다. */
@@ -65,6 +68,10 @@ class InMemoryDeploymentStore(private val capacity: Int = DEFAULT_CAPACITY) : De
 
     override fun hasRunning(service: String): Boolean = synchronized(lock) {
         records.values.any { it.service == service && it.status == DeploymentStatus.RUNNING }
+    }
+
+    override fun running(service: String): List<DeploymentRecord> = synchronized(lock) {
+        records.values.filter { it.service == service && it.status == DeploymentStatus.RUNNING }
     }
 
     override fun get(id: String): DeploymentRecord? = synchronized(lock) { records[id] }

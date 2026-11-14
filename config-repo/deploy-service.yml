@@ -21,6 +21,14 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+  # Temporal(서버는 modu_infra base/data/temporal.yaml, 2026-11-14): 배포 한 건 = 워크플로 deploy-<service>(네임스페이스 platform, 태스크 큐 deploy).
+  # 맥에서 deploy-service 를 띄울 때: TEMPORAL_TARGET=127.0.0.1:7233(overlays/dev temporal-lb), TEMPORAL_TASK_QUEUE=deploy-local(dev 파드 워커와 큐를 나눠 먹지 않게).
+  temporal:
+    connection:
+      target: ${TEMPORAL_TARGET:temporal:7233}
+    namespace: platform
+    workers-auto-discovery:
+      packages: com.example.deployservice.deploy.workflow
 deploy:
   github:
     api-url: https://api.github.com
@@ -42,6 +50,10 @@ deploy:
     # 환경변수 DEPLOY_ARGOCD_TOKEN 으로 들어온다(modu_infra k8s/create-infra-secret.sh). 권한은 modu-dev 의 get·sync 뿐.
   kubernetes:
     namespace: modu
+  temporal:
+    namespace: platform
+    task-queue: ${TEMPORAL_TASK_QUEUE:deploy}
+    public-url: http://localhost:8233     # 콘솔 "Temporal 에서 보기"(맥 루프백 전용 UI, overlays/dev temporal-ui-lb)
   store:
     capacity: 500            # 목록 API 가 돌려주는 최대 건수(DB 에는 전부 남는다)
   services:
