@@ -24,9 +24,9 @@ import org.springframework.transaction.support.TransactionTemplate
  * | 메서드 | DB | 이유 |
  * |---|---|---|
  * | [add], [update] | master([DeploymentRwRepository]) | 쓰기. update 는 FOR UPDATE 로 잠그고 읽는다 |
- * | [addIfNoneRunning], [hasRunning] | master | 서비스당 RUNNING 하나 — 유니크 키가 막고, 사전 확인도 master 에서(복제 지연이 있으면 방금 시작한 배포를 못 본다) |
+ * | [addIfNoneRunning], [hasRunning], [running] | master | 서비스당 RUNNING 하나 — 유니크 키가 막고, 사전 확인도 master 에서(복제 지연이 있으면 방금 시작한 배포를 못 본다) |
  * | [get] | master | 진행률 경로 — 콘솔이 배포 직후 2초마다 한 건을 폴링한다. 복제 지연이 있으면 방금 쓴 진행률이 안 보이거나(404) 뒤로 간다 |
- * | 재시작 복구([StaleDeploymentRecovery]) | master | 방금 RUNNING 으로 남은 행을 놓치면 안 된다 |
+ * | 고아 정리([DeploymentStarter]) | master | 방금 RUNNING 으로 남은 행을 놓치면 안 된다 |
  * | [list], [latest], [latestSucceeded], [size] | replica([DeploymentRoRepository]) | 이력 페이지·서비스 표. 몇 초 늦어도 되고 master 부하를 덜어 준다 |
  *
  * 그래서 "방금 쓴 것을 바로 다시 읽어야 하는" 새 조회는 RO 가 아니라 RW 저장소에 둔다. 롤백 대상([latestSucceeded])은 배포가 끝난 지
@@ -88,6 +88,11 @@ class JpaDeploymentStore(
     @Transactional(readOnly = true)
     override fun hasRunning(service: String): Boolean = rw.existsByServiceAndStatus(service, DeploymentStatus.RUNNING.name)
 
+    /** master 에서 읽는다(고아 정리 — 방금 남은 RUNNING 행을 복제 지연으로 놓치면 안 된다). */
+    @Transactional(readOnly = true)
+    override fun running(service: String): List<DeploymentRecord> =
+        rw.findByServiceAndStatus(service, DeploymentStatus.RUNNING.name).map(::toRecord)
+
     /** master 에서 읽는다(진행률 폴링 — 복제 지연 없이 방금 쓴 값). */
     @Transactional(readOnly = true)
     override fun get(id: String): DeploymentRecord? = rw.findById(id).orElse(null)?.let(::toRecord)
@@ -143,6 +148,7 @@ class JpaDeploymentStore(
         e.error = r.error
         e.commitSha = r.commit?.sha
         e.commitUrl = r.commit?.url
+        e.workflowRunId = r.workflowRunId
         e.stepsJson = objectMapper.writeValueAsString(r.steps)
         e.rolloutJson = r.rollout?.let { objectMapper.writeValueAsString(it) }
     }
@@ -163,5 +169,6 @@ class JpaDeploymentStore(
         rollout = e.rolloutJson?.let { objectMapper.readValue<RolloutView>(it) },
         commit = e.commitSha?.let { sha -> CommitView(sha, e.commitUrl ?: "") },
         error = e.error,
+        workflowRunId = e.workflowRunId,
     )
 }

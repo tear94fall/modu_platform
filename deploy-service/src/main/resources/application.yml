@@ -46,6 +46,7 @@ management:
         readiness:
           # 서비스가 떴고 이력 DB master 에 붙어 있는지 본다(masterDb, MasterDbHealthConfig). 자동 db 는 replica 까지 보므로 넣지 않는다 —
           # 레플리카가 늦거나 죽어도 서비스가 빠지면 안 된다. GitHub·Argo CD·API 서버는 요청 때 부르는 외부 의존이라 readiness 조건이 아니다.
+          # Temporal(indicator `temporal`, TemporalConfig)도 넣지 않는다 — 끊기면 배포 **시작**만 503 temporal_unavailable 이고 목록·이력 조회는 돈다.
           include: readinessState, masterDb
         liveness:
           include: livenessState

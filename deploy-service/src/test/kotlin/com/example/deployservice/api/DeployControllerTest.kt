@@ -13,6 +13,7 @@ import com.example.deployservice.deploy.ServicesResponse
 import com.example.deployservice.deploy.Step
 import com.example.deployservice.deploy.TagView
 import com.example.deployservice.deploy.TagsResponse
+import com.example.deployservice.deploy.TemporalView
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
@@ -69,6 +70,7 @@ class DeployControllerTest(@Autowired private val mvc: MockMvc) {
             ServicesResponse(
                 listOf(ServiceView("point-service", "modu_chat", "ghcr.io/tear94fall/modu-chat/point-service", "develop-5708871", "develop-5708871", 1, 1, 1, ServiceHealth.READY, null)),
                 ArgoCdView("modu-dev", "http://localhost:8090/applications/modu-dev"),
+                TemporalView("platform", "http://localhost:8233"),
             ),
         )
 
@@ -81,6 +83,8 @@ class DeployControllerTest(@Autowired private val mvc: MockMvc) {
             jsonPath("$.services[0].lastDeployment") { value(null) }
             jsonPath("$.argocd.application") { value("modu-dev") }
             jsonPath("$.argocd.url") { value("http://localhost:8090/applications/modu-dev") }
+            jsonPath("$.temporal.namespace") { value("platform") }
+            jsonPath("$.temporal.url") { value("http://localhost:8233") }
         }
     }
 

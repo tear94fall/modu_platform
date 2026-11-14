@@ -5,9 +5,9 @@ import com.example.deployservice.gateway.MemberServiceStaffLookup
 import com.example.deployservice.gateway.StaffLookup
 import com.example.deployservice.deploy.DefaultDeployService
 import com.example.deployservice.deploy.DeployService
-import com.example.deployservice.deploy.DeploymentExecutor
-import com.example.deployservice.deploy.DeploymentRunner
+import com.example.deployservice.deploy.DeploymentStarter
 import com.example.deployservice.deploy.DeploymentStore
+import com.example.deployservice.deploy.TemporalGateway
 import com.example.deployservice.gateway.ArgoCdGateway
 import com.example.deployservice.gateway.ArgoCdRestGateway
 import com.example.deployservice.gateway.ContainerRegistryGateway
@@ -16,6 +16,8 @@ import com.example.deployservice.gateway.GhcrRegistryGateway
 import com.example.deployservice.gateway.GitHubGateway
 import com.example.deployservice.gateway.GitHubRestGateway
 import com.example.deployservice.gateway.KubernetesGateway
+import com.example.deployservice.gateway.WorkflowClientTemporalGateway
+import io.temporal.client.WorkflowClient
 import com.example.deployservice.github.GitHubAppCredentials
 import com.example.deployservice.github.GitHubAppPrivateKeys
 import com.example.deployservice.github.GitHubCredentials
@@ -32,7 +34,8 @@ import java.time.Clock
 import java.time.Duration
 
 /**
- * 외부 시스템 클라이언트와 배포 파이프라인 빈. 게이트웨이(GitHub·GHCR·Argo CD·k8s)는 인터페이스로 두어 테스트가 가짜로 바꿔 끼운다.
+ * 외부 시스템 클라이언트와 배포 시작 빈. 게이트웨이(GitHub·GHCR·Argo CD·k8s·Temporal)는 인터페이스로 두어 테스트가 가짜로 바꿔 끼운다.
+ * 배포 실행 자체는 Temporal 워크플로(deploy/workflow — 스타터가 자동 등록하는 워커)가 맡는다.
  * 자격(GitHub App 비밀키·Argo CD 토큰)은 config-repo/deploy-service.yml 의 {cipher} 값(config-service 가 복호화)이고 로그에 남기지 않는다.
  */
 @Configuration
@@ -138,18 +141,12 @@ class DeployWiring {
     fun kubernetesGateway(client: KubernetesClient, properties: DeployProperties): KubernetesGateway =
         Fabric8KubernetesGateway(client, properties.kubernetes.namespace)
 
+    /** 배포 워크플로 시작·조회. WorkflowClient 는 temporal-spring-boot-starter 가 만든다(spring.temporal.*). */
     @Bean
-    fun deploymentExecutor(
-        properties: DeployProperties,
-        github: GitHubGateway,
-        argo: ArgoCdGateway,
-        kubernetes: KubernetesGateway,
-        store: DeploymentStore,
-        clock: Clock,
-    ): DeploymentExecutor = DeploymentExecutor(properties, github, argo, kubernetes, store, clock)
+    fun temporalGateway(client: WorkflowClient, properties: DeployProperties): TemporalGateway = WorkflowClientTemporalGateway(client, properties)
 
     @Bean
-    fun deploymentRunner(store: DeploymentStore, executor: DeploymentExecutor): DeploymentRunner = DeploymentRunner(store, executor)
+    fun deploymentStarter(temporal: TemporalGateway, store: DeploymentStore, clock: Clock): DeploymentStarter = DeploymentStarter(temporal, store, clock)
 
     @Bean
     fun deployService(
@@ -158,9 +155,9 @@ class DeployWiring {
         registry: ContainerRegistryGateway,
         kubernetes: KubernetesGateway,
         store: DeploymentStore,
-        runner: DeploymentRunner,
+        starter: DeploymentStarter,
         clock: Clock,
-    ): DeployService = DefaultDeployService(properties, github, registry, kubernetes, store, runner, clock)
+    ): DeployService = DefaultDeployService(properties, github, registry, kubernetes, store, starter, clock)
 
     private fun requestFactory() = SimpleClientHttpRequestFactory().apply {
         setConnectTimeout(Duration.ofSeconds(10))

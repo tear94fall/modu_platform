@@ -7,6 +7,7 @@ import com.example.deployservice.gateway.KubernetesGateway
 import io.fabric8.kubernetes.client.KubernetesClient
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -76,6 +77,15 @@ class DeployServiceApplicationTests(
         assertEquals(Status.UP, healthEndpoint.healthForPath("readiness", "masterDb")!!.status)
         assertNull(healthEndpoint.healthForPath("readiness", "db"))
         assertTrue(groups.get("liveness")!!.isMember("livenessState"))
+    }
+
+    /** Temporal 은 /actuator/health 에만 — readiness 에 넣으면 Temporal 이 잠깐 끊길 때 서비스 목록·이력 조회까지 다 빠진다. 배포 시작만 503 으로 거절한다. */
+    @Test
+    fun `temporal health is exposed but not part of readiness`() {
+        val temporal = healthEndpoint.healthForPath("temporal")
+        assertNotNull(temporal, "temporal HealthIndicator 가 있어야 한다(TemporalConfig)")
+        assertEquals(Status.UP, temporal!!.status)
+        assertFalse(groups.get("readiness")!!.isMember("temporal"), "temporal 은 readiness 조건이 아니다")
     }
 
     @Test
