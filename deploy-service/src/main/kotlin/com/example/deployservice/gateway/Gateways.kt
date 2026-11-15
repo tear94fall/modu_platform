@@ -169,4 +169,7 @@ interface KubernetesGateway {
 
     /** 중단 — `{"abort": true}`. stable ReplicaSet 으로 돌아간다. */
     fun abort(name: String)
+
+    /** 중단을 풀어 다시 시작 — `{"abort": false}`. 카나리가 첫 단계부터 다시 돌아 멈춘다(= `kubectl argo rollouts retry`). */
+    fun retry(name: String)
 }

@@ -43,6 +43,8 @@ data class ServiceView(
     /** 카나리 단계 가중치(예: [50] 또는 [33, 66]). 파드 1개면 빈 목록. */
     val canarySteps: List<Int> = emptyList(),
     val rolloutPaused: RolloutPausedView? = null,
+    /** Rollout 이 중단(abort)된 채 남아 있다(배포 기록과 무관) — 서비스 행의 "재시도" 가 abort 를 푼다. */
+    val rolloutAborted: Boolean = false,
 )
 
 data class ArgoCdView(val application: String, val url: String)
@@ -137,8 +139,9 @@ class DefaultDeployService(
                     name = spec.name, repo = spec.repo, image = spec.image, gitTag = gitTag,
                     runningTag = rollout.imageTag, readyReplicas = rollout.ready, desiredReplicas = rollout.desired, updatedReplicas = rollout.updated,
                     status = health(rollout), lastDeployment = lastDeployment,
-                    canaryCapable = rollout.desired >= 2, canarySteps = rollout.stepWeights,
+                    canaryCapable = canaryCapable(rollout), canarySteps = rollout.stepWeights,
                     rolloutPaused = if (rollout.pausedAtStep) RolloutPausedView(rollout.currentStepIndex ?: 0, rollout.currentWeight, running?.id) else null,
+                    rolloutAborted = rollout.aborted,
                 )
             } else {
                 // 전환 전 서비스(Rollout 없음): Deployment 기준 — 카나리 불가
@@ -183,8 +186,11 @@ class DefaultDeployService(
             throw ApiException.badRequest("invalid_tag", "태그는 develop-<sha7> 또는 master-<sha7> 모양이어야 합니다: $tag")
         }
         if (mode == DeployMode.CANARY) {
-            val rollout = runCatching { kubernetes.rollout(service) }.getOrNull()
-            if (rollout == null || rollout.desired < 2) throw ApiException.badRequest("canary_not_available", "파드가 1개라 카나리 배포를 할 수 없다: $service")
+            val rollout = runCatching { kubernetes.rollout(service) }
+                .getOrElse { throw ApiException.unavailable("kubernetes_unavailable", "Rollout 을 읽지 못해 카나리 배포를 시작할 수 없다: ${it.message}") }
+                ?: throw ApiException.badRequest("canary_not_available", "Rollout 이 없어 카나리 배포를 할 수 없다: $service")
+            if (rollout.desired < 2) throw ApiException.badRequest("canary_not_available", "파드가 1개라 카나리 배포를 할 수 없다: $service")
+            if (rollout.stepWeights.isEmpty()) throw ApiException.badRequest("canary_not_available", "Rollout 에 카나리 단계(steps)가 없어 카나리 배포를 할 수 없다: $service")
         }
         // "이미 배포 중" 판단은 여기서 하지 않는다 — starter.start 가 DB 유니크 키 → 워크플로 상태 순으로 보고, 워크플로가 사라진 고아 RUNNING 기록은 닫고 진행한다.
         // 여기서 hasRunning 으로 먼저 409 를 내면 그 조정이 영원히 돌지 않는다(2026-11-15 dev 에서 확인).
@@ -224,7 +230,7 @@ class DefaultDeployService(
         val live = RolloutLive(
             phase = rollout.phase, weight = rollout.currentWeight,
             pods = pods.map { PodView(it.name, it.phase, it.ready, it.reason) },
-            ready = rollout.ready, desired = rollout.desired,
+            ready = rollout.ready, desired = rollout.desired, stepWeights = rollout.stepWeights,
         )
         return record.copy(canary = canary.copy(live = live))
     }
@@ -255,20 +261,29 @@ class DefaultDeployService(
         return logs.errors(pods, since)
     }
 
-    override fun promoteRollout(service: String, by: String) = rolloutAction(service, by, "진행") { kubernetes.promote(it) }
+    override fun promoteRollout(service: String, by: String) = rolloutAction(service, by, "진행", retryIfAborted = true) { kubernetes.promote(it) }
 
-    override fun abortRollout(service: String, by: String) = rolloutAction(service, by, "중단") { kubernetes.abort(it) }
+    override fun abortRollout(service: String, by: String) = rolloutAction(service, by, "중단", retryIfAborted = false) { kubernetes.abort(it) }
 
-    private fun rolloutAction(service: String, by: String, what: String, action: (String) -> Unit) {
+    private fun rolloutAction(service: String, by: String, what: String, retryIfAborted: Boolean, action: (String) -> Unit) {
         spec(service)
         if (store.running(service).isNotEmpty()) {
             throw ApiException.conflict("use_deployment", "$service 는 배포 기록이 진행 중입니다 — 그 기록의 다음 단계/중단 버튼을 쓰세요.")
         }
         val rollout = kubernetes.rollout(service) ?: throw ApiException.notFound("rollout_not_found", "Rollout 이 없습니다: $service")
+        if (rollout.aborted && !rollout.pausedAtStep && retryIfAborted) {
+            // 중단된 채 남은 Rollout(Degraded) — abort 를 풀면 카나리가 첫 단계부터 다시 돌아 멈춘다(= argo rollouts retry). 콘솔에서 복구할 유일한 길.
+            kubernetes.retry(service)
+            log.info("rollout {} retry by {} (no deployment record)", service, by)
+            return
+        }
         if (!rollout.pausedAtStep) throw ApiException.conflict("not_paused", "$service 의 Rollout 은 단계에서 멈춰 있지 않습니다.")
         action(service)
         log.info("rollout {} {} by {} (no deployment record)", service, what, by)
     }
+
+    /** 카나리 배포 가능 = 파드 2개 이상 **그리고** 단계가 있다(steps 없이 2개면 멈추지 않고 100% 까지 가 버린다 — check.sh 는 CI 가 없어 믿을 수 없다). */
+    private fun canaryCapable(rollout: RolloutSnapshot) = rollout.desired >= 2 && rollout.stepWeights.isNotEmpty()
 
     override fun deployments(service: String?, limit: Int): DeploymentsResponse =
         DeploymentsResponse(

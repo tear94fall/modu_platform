@@ -408,6 +408,75 @@ class DeployWorkflowTest {
         assertEquals("파드 point-service-new-1 CrashLoopBackOff: boom", r.error)
     }
 
+    private fun pausedAt(weight: Int, stepIndex: Int) = rollout(desired = 3, updated = 1, ready = 3, available = 3, phase = "Paused", stable = "old", current = "new", weights = listOf(33, 66), stepIndex = stepIndex, paused = true)
+
+    private fun waitUntil(what: String, pred: (DeploymentRecord?) -> Boolean) {
+        for (i in 0 until 50) { if (pred(store.get("dep-1"))) return; Thread.sleep(100) }
+        throw AssertionError("never reached: $what — ${store.get("dep-1")?.canary} ${store.get("dep-1")?.status}")
+    }
+
+    @Test
+    fun `direct deploy of a service with canary steps promotes again when the rollout pauses at a step`() {
+        // Sync 직후의 promoteFull 이 컨트롤러가 새 템플릿을 보기 전에 닿으면 플래그가 지워진다 — 폴링 중 멈춤을 보면 다시 promoteFull(멱등).
+        val input = start()
+        succeedArgoAfter(0)
+        k8s.rollouts += pausedAt50()
+        k8s.rollouts += pausedAt50()
+        k8s.rollouts += rollout(desired = 2, updated = 2, ready = 2, available = 2, weights = listOf(50), stepIndex = 2)
+        k8s.rolloutPods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true))
+
+        workflow.run(input)
+
+        val r = store.get("dep-1")!!
+        assertEquals(DeploymentStatus.SUCCEEDED, r.status)
+        assertTrue(k8s.fullPromotes.size >= 2, "멈춤을 보면 promoteFull 을 다시 보낸다: ${k8s.fullPromotes}")
+        assertTrue(k8s.promotes.isEmpty())
+    }
+
+    @Test
+    fun `the seven day limit counts the whole deployment, not each step`() {
+        val input = start(mode = DeployMode.CANARY)
+        succeedArgoAfter(0)
+        k8s.rollouts += pausedAt(33, 1)
+        k8s.rolloutPods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true))
+        startAsync(input)
+        waitUntilWaiting()
+
+        env.sleep(Duration.ofDays(5).plusMinutes(30))   // 하트비트 120회(+30분 여유: 시간 경계의 타이머가 promote 와 겹치지 않게)
+        k8s.rollouts += pausedAt(66, 3)
+        workflow.promote("joonsub2990@gmail.com")
+        waitUntil("second step waiting") { it?.canary?.waiting == true && it.canary?.currentStep == 2 }
+
+        // 5일 + 2일(+여유) = 7일 넘김 → 시스템 중단(단계마다 7일이 아니다 — 실행 타임아웃 8일 안에서 끝나야 한다)
+        env.sleep(Duration.ofDays(2).plusMinutes(30))
+        waitUntil("system abort started") { it?.canary?.history?.lastOrNull()?.by == "system" }
+        val r = store.get("dep-1")!!
+        assertEquals(listOf("PROMOTE", "ABORT"), r.canary!!.history.map { it.action })
+    }
+
+    @Test
+    fun `abort reverts the git tag before waiting for the rollout, so git is consistent even if the rollout never recovers`() {
+        val input = start(mode = DeployMode.CANARY)
+        succeedArgoAfter(0)
+        k8s.rollouts += pausedAt50()
+        k8s.rolloutPods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true), PodSnapshot("point-service-old-1", "Running", true, "", "", false))
+        val stub = startAsync(input)
+        waitUntilWaiting()
+
+        // abort 뒤 Rollout 이 영원히 Degraded(ready 1/2) — 그래도 git 은 이전 태그로 돌아가 있어야 한다
+        k8s.rollouts += rollout(desired = 2, updated = 0, ready = 1, available = 1, phase = "Degraded", stable = "old", current = "new", weights = listOf(50), stepIndex = 1, aborted = true)
+        argo.pendingRevision = "c0ffee1234567890"
+        argo.phases += ArgoOperationState("Succeeded", "ok", clock.instant(), "c0ffee1234567890")
+        workflow.abort("joonsub2990@gmail.com")
+        assertThrows<WorkflowFailedException> { stub.getResult(Void::class.java) }
+
+        val r = store.get("dep-1")!!
+        assertEquals(DeploymentStatus.FAILED, r.status)
+        assertEquals(2, github.puts.size, "되돌림 커밋은 Rollout 복귀를 기다리기 전에")
+        assertTrue(github.puts[1].first.contains("newTag: develop-35db83f"))
+        assertTrue(r.error!!.contains("develop-35db83f"), "실패 메시지에 git 이 어느 태그인지: ${r.error}")
+    }
+
     companion object {
         const val TASK_QUEUE = "deploy-test"
     }
