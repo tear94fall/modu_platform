@@ -161,8 +161,13 @@ class DeployWorkflowImpl : DeployWorkflow {
     /** true = 완료(SUCCEEDED 로 닫을 것), false = 중단(ABORTED 로 이미 닫힘). */
     private fun rolloutV2(id: String, input: DeployInput, previousTag: String): Boolean {
         if (input.mode == DeployMode.DIRECT) {
-            kubernetes.promoteFull(input.service)   // 단계가 있어도 한 번에(파드 1개면 단계가 없어 no-op)
-            val probe = waitRollout(id, input.service, canary = false) { it.rolledOut }
+            // 단계가 있어도 한 번에(파드 1개면 단계가 없어 no-op). Sync 직후의 promoteFull 은 컨트롤러가 새 템플릿을 보기 전에 닿으면 지워지므로,
+            // 폴링 중 단계에서 멈춘 것을 보면 다시 보낸다(멱등) — 그러지 않으면 50% 에서 멈춘 채 10분 타임아웃으로 실패한다(리뷰 2026-11-15).
+            kubernetes.promoteFull(input.service)
+            val probe = waitRollout(id, input.service, canary = false) { p ->
+                if (p.pausedAtStep) kubernetes.promoteFull(input.service)
+                p.rolledOut
+            }
             records.finishStep(id, Step.ROLLOUT, Progress.DONE, "준비 ${probe.ready}/${probe.desired}")
             return true
         }
@@ -171,6 +176,7 @@ class DeployWorkflowImpl : DeployWorkflow {
         var canary = CanaryView(totalSteps = 0, currentStep = 0, weight = 0, waiting = false)
         records.canary(id, canary)
         var probe: RolloutProbe2
+        var heartbeats = 0   // 배포 전체의 대기 시간(단계마다 리셋하면 실행 타임아웃 8일을 넘길 수 있다)
         while (true) {
             probe = waitRollout(id, input.service, canary = true) { it.rolledOut || it.pausedAtStep }
             canary = canary.copy(totalSteps = probe.totalSteps, currentStep = probe.currentStep, weight = probe.currentWeight,
@@ -180,7 +186,6 @@ class DeployWorkflowImpl : DeployWorkflow {
             canary = canary.copy(waiting = true, waitingSince = Instant.ofEpochMilli(Workflow.currentTimeMillis()))
             records.canary(id, canary)
             pendingAction = null
-            var heartbeats = 0
             while (pendingAction == null) {
                 if (Workflow.await(WAIT_HEARTBEAT) { pendingAction != null }) break
                 // 1시간마다: 새 파드가 죽어 있으면 실패, 기록 스냅샷 갱신, 7일이면 시스템 중단
@@ -221,20 +226,25 @@ class DeployWorkflowImpl : DeployWorkflow {
     }
 
 
-    /** abort → stable 복귀 대기 → 이전 태그 커밋 → Sync → 템플릿이 옛 태그로 돌아와 Healthy → 기록 ABORTED. */
+    /**
+     * abort → **먼저** 이전 태그 커밋 + Sync(git 이 실행과 어긋난 채 남지 않게 — 그 뒤 무엇이 실패해도 git 은 옛 태그) → 템플릿이 옛 태그로 돌아와
+     * Rollout 이 Healthy → 기록 ABORTED. 커밋이 실패하면 메시지에 git 이 새 태그로 남아 있음을 적는다(사람이 이전 태그로 다시 배포).
+     */
     private fun abortCanary(id: String, input: DeployInput, previousTag: String, action: Action) {
         kubernetes.abort(input.service)
-        records.message(id, Step.ROLLOUT, "중단 — 옛 버전으로 되돌리는 중")
+        records.message(id, Step.ROLLOUT, "중단 — git 을 옛 태그 $previousTag 로 되돌리는 중")
+        val revert = try {
+            commit.commitTag(input.service, input.image, previousTag, action.by)
+        } catch (e: TemporalFailure) {
+            fail("중단했지만 git 을 이전 태그로 되돌리지 못했습니다(${messageOf(e)}) — git 에는 새 태그 ${input.tag} 가 남아 있습니다. 이전 태그 $previousTag 로 다시 배포하세요.")
+        }
+        if (revert.commitSha != null) records.commit(id, revert.commitSha, revert.commitUrl ?: "")
+        syncRevision(id, input.service, revert.revision)
         pollUntil(ROLLOUT_TIMEOUT, POD_POLL) {
             val p = kubernetes.rolloutStatus2(input.service)
             records.rollout(id, p.view(), Progress.rollout(p.ready, p.desired))
-            p.takeIf { it.aborted && it.ready == it.desired }
-        } ?: fail("중단 뒤 옛 버전으로 ${ROLLOUT_TIMEOUT.toMinutes()}분 안에 돌아오지 않았습니다.")
-        val revert = commit.commitTag(input.service, input.image, previousTag, action.by)
-        if (revert.commitSha != null) records.commit(id, revert.commitSha, revert.commitUrl ?: "")
-        syncRevision(id, input.service, revert.revision)
-        pollUntil(ROLLOUT_TIMEOUT, POD_POLL) { kubernetes.rolloutStatus2(input.service).takeIf { it.rolledOut } }
-            ?: fail("되돌린 뒤 Rollout 이 ${ROLLOUT_TIMEOUT.toMinutes()}분 안에 Healthy 가 되지 않았습니다.")
+            p.takeIf { it.rolledOut }
+        } ?: fail("중단 뒤 git 은 이전 태그 $previousTag 로 되돌렸지만 Rollout 이 ${ROLLOUT_TIMEOUT.toMinutes()}분 안에 Healthy 가 되지 않았습니다.")
         val reason = if (action.by == SYSTEM) WAIT_EXPIRED else "운영자가 중단(${action.by}) — 옛 태그 $previousTag 로 되돌림"
         records.aborted(id, action.by, reason)
         log.info("deployment {} {} aborted by {} — reverted to {}", id, input.service, action.by, previousTag)

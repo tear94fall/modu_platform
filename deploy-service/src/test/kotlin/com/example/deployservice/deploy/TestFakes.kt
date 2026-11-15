@@ -147,6 +147,7 @@ class FakeKubernetes : KubernetesGateway {
     val promotes = mutableListOf<String>()
     val fullPromotes = mutableListOf<String>()
     val aborts = mutableListOf<String>()
+    val retries = mutableListOf<String>()
     private var lastRollout: RolloutSnapshot? = null
 
     override fun deployment(name: String): DeploymentSnapshot? {
@@ -165,5 +166,6 @@ class FakeKubernetes : KubernetesGateway {
     override fun promote(name: String) { promotes += name }
     override fun promoteFull(name: String) { fullPromotes += name }
     override fun abort(name: String) { aborts += name }
+    override fun retry(name: String) { retries += name }
 }
 

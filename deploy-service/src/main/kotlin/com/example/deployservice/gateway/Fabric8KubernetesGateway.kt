@@ -159,6 +159,8 @@ class Fabric8KubernetesGateway(private val client: KubernetesClient, private val
 
     override fun abort(name: String) = patchStatus(name, "중단", """{"abort":true}""")
 
+    override fun retry(name: String) = patchStatus(name, "재시도", """{"abort":false}""")
+
     private inline fun <T> call(what: String, block: () -> T): T = try {
         block()
     } catch (e: KubernetesClientException) {

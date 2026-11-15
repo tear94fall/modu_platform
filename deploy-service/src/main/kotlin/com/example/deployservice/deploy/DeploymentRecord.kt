@@ -12,7 +12,8 @@ enum class DeployMode { DIRECT, CANARY }
 data class CanaryHistory(val step: Int, val weight: Int, val action: String, val by: String, val at: Instant)
 
 /** 조회 시점에 k8s 를 읽은 라이브 상태(저장하지 않는다). 대기 중 콘솔이 새/옛 파드 표를 그린다. */
-data class RolloutLive(val phase: String, val weight: Int, val pods: List<PodView>, val ready: Int, val desired: Int)
+/** [stepWeights] 는 Rollout 의 단계 가중치 — 콘솔이 "다음 단계 → W%" 를 계산한다(다음 = stepWeights[currentStep], 없으면 100). */
+data class RolloutLive(val phase: String, val weight: Int, val pods: List<PodView>, val ready: Int, val desired: Int, val stepWeights: List<Int> = emptyList())
 
 /**
  * 카나리 진행 상태(deployment.canary_json). [currentStep] 은 1부터, 0 = 첫 단계 전. [waiting] 이면 사람의 결정을 기다리는 중([waitingSince] 부터).

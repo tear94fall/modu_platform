@@ -125,13 +125,13 @@ deploy-service 파드가 죽어도(자기 자신을 배포할 때 포함) 새 �
 앱 18개는 modu_infra 에서 같은 이름의 **Rollout**(Argo Rollouts, `workloadRef`)이 파드를 가진다. 배포 탭의 커밋·Sync 는 그대로(Deployment 템플릿)이고, 워크플로의 ROLLOUT 단계가
 Rollout 을 읽는다(`Workflow.getVersion("rollout-v2")` — 옛 Deployment 폴링 경로는 전환 전 실행의 재생용으로 남겨 두었다, 다음 워크플로 변경 때 제거).
 
-- **DIRECT**(기존 "배포"): `promoteFull` 로 단계를 전부 건너뛰고 끝까지. 파드 1개 서비스는 단계가 없어 지금과 같다.
-- **CANARY**(`mode: CANARY`, 파드 2개 이상): Rollout 이 단계에서 멈추면(`pauseConditions`) 기록 `canary.waiting=true` 로 사람을 기다린다 — `POST /deployments/{id}/promote|abort`(Signal).
+- **DIRECT**(기존 "배포"): `promoteFull` 로 단계를 전부 건너뛰고 끝까지. 파드 1개 서비스는 단계가 없어 지금과 같다. Sync 직후의 `promoteFull` 은 컨트롤러가 새 템플릿을 보기 전에 닿으면 지워지므로, 폴링 중 단계에서 멈춘 것을 보면 다시 보낸다(멱등).
+- **CANARY**(`mode: CANARY`, 파드 2개 이상 **이고 단계가 있는** Rollout — `canaryCapable`; steps 없이 2개면 멈추지 않고 100% 까지 가 버리므로 400): Rollout 이 단계에서 멈추면(`pauseConditions`) 기록 `canary.waiting=true` 로 사람을 기다린다 — `POST /deployments/{id}/promote|abort`(Signal).
   대기 중 `GET /deployments/{id}` 는 Rollout·파드를 지금 읽어 `canary.live` 로 덧붙이고, `GET /deployments/{id}/errors?since=` 는 새 파드의 ERROR 로그(OpenSearch `deploy.logs.*`)를 돌려준다.
-  워크플로는 1시간마다 깨어나 새 파드가 CrashLoop 이면 FAILED, **7일**이 지나면 시스템이 중단 경로를 밟는다(옛 버전으로 되돌리고 git 태그 원복, 기록 ABORTED "7일 대기 상한").
-- **중단**: Rollout abort → stable 복귀 → 이전 태그 커밋 → Sync → Healthy → 기록 **ABORTED**(실패가 아니다). 단계 이력은 `canary.history`.
+  워크플로는 1시간마다 깨어나 새 파드가 CrashLoop 이면 FAILED, 대기가 **배포 전체로 7일**(단계마다가 아니다 — 실행 타임아웃 8일 안)이 지나면 시스템이 중단 경로를 밟는다(옛 버전으로 되돌리고 git 태그 원복, 기록 ABORTED "7일 대기 상한"). `canary.live.stepWeights` 로 콘솔이 "다음 단계 → W%" 를 계산한다.
+- **중단**: Rollout abort → **먼저** 이전 태그 커밋 + Sync(그 뒤 무엇이 실패해도 git 은 옛 태그) → 템플릿이 옛 태그로 돌아와 Healthy → 기록 **ABORTED**(실패가 아니다). 커밋이 실패하면 FAILED 메시지에 "git 에는 새 태그가 남아 있다" 를 적는다. 단계 이력은 `canary.history`.
 - 단계 규칙(파드 N → `floor(100k/N)`%, 5% 미만이면 묶음)은 modu_infra `k8s/rollouts/steps.sh` 가 git 에 적는다 — 여기선 계산하지 않는다.
-- **기록 없이 멈춘 Rollout**(배포 탭 밖에서 템플릿이 바뀐 경우): 서비스 표 `status PAUSED`·`rolloutPaused.deploymentId null` → `POST /services/{name}/rollout/promote|abort` 로 직접 푼다(git 은 건드리지 않는다).
+- **기록 없이 멈춘 Rollout**(배포 탭 밖에서 템플릿이 바뀐 경우): 서비스 표 `status PAUSED`·`rolloutPaused.deploymentId null` → `POST /services/{name}/rollout/promote|abort` 로 직접 푼다(git 은 건드리지 않는다). abort 뒤 Rollout 은 Degraded + `abort=true` 로 남는데(`rolloutAborted`), 그때의 `rollout/promote` 는 `{"abort": false}`(= argo rollouts retry) 로 첫 단계부터 다시 돌려 멈추게 한다 — 콘솔 서비스 행의 "재시도".
 - 실행 타임아웃: DIRECT 30분, CANARY 8일(서버 안전망). 카나리 대기 중 deploy-service 가 재시작돼도 대기는 Temporal 이 들고 있다.
 
 ## 테스트

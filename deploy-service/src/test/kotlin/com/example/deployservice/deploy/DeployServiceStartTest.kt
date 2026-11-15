@@ -40,8 +40,8 @@ class DeployServiceStartTest {
     private val logs: LogsGateway = mock()
     private val service = DefaultDeployService(props, github, registry, kubernetes, store, DeploymentStarter(temporal, store, clock), clock, logs)
 
-    private fun rollout(desired: Int, weights: List<Int> = emptyList(), phase: String = "Healthy", stepIndex: Int? = null, paused: Boolean = false) =
-        RolloutSnapshot("point-service", desired, desired, desired, desired, desired, phase, null, stepIndex, weights, weights.size * 2, paused, false, "new", if (paused) "old" else "new", "develop-35db83f")
+    private fun rollout(desired: Int, weights: List<Int> = emptyList(), phase: String = "Healthy", stepIndex: Int? = null, paused: Boolean = false, aborted: Boolean = false) =
+        RolloutSnapshot("point-service", desired, desired, desired, desired, desired, phase, null, stepIndex, weights, weights.size * 2, paused, aborted, "new", if (paused || aborted) "old" else "new", "develop-35db83f")
 
     private fun canaryRecord(waiting: Boolean) = DeploymentRecord(
         id = "dep-c", service = "point-service", tag = "develop-5708871", by = "me", startedAt = clock.instant(), mode = DeployMode.CANARY, workflowRunId = "run-c",
@@ -118,6 +118,7 @@ class DeployServiceStartTest {
         val live = d.canary!!.live
         assertNotNull(live)
         assertEquals("Paused", live!!.phase); assertEquals(50, live.weight); assertEquals(2, live.pods.size)
+        assertEquals(listOf(50), live.stepWeights, "콘솔이 다음 단계 비율을 계산할 수 있게")
         assertEquals(0L, service.errors("dep-c", clock.instant().minus(Duration.ofMinutes(1))).count)
         assertNull(service.deployments("point-service", 5).deployments.first().canary!!.live, "목록은 라이브를 채우지 않는다")
     }
@@ -145,5 +146,43 @@ class DeployServiceStartTest {
         val e = org.junit.jupiter.api.assertThrows<com.example.deployservice.api.ApiException> { service.abortRollout("point-service", "me") }
         assertEquals("use_deployment", e.error)
         assertTrue(kubernetes.aborts.isEmpty())
+    }
+
+    @Test
+    fun `a canary deploy needs canary steps on the rollout, two pods alone are not enough`() {
+        kubernetes.rollouts += rollout(desired = 2, weights = emptyList())
+
+        val e = org.junit.jupiter.api.assertThrows<com.example.deployservice.api.ApiException> { service.deploy("point-service", "develop-5708871", "me", null, DeployMode.CANARY) }
+
+        assertEquals("canary_not_available", e.error)
+        assertTrue(e.message!!.contains("단계"), e.message)
+        assertNull(store.list("point-service", 1).firstOrNull())
+    }
+
+    @Test
+    fun `services do not offer canary when the rollout has two pods but no steps`() {
+        kubernetes.rollouts += rollout(desired = 2, weights = emptyList())
+
+        val view = service.services().services.single { it.name == "point-service" }
+
+        assertEquals(false, view.canaryCapable)
+        assertEquals(false, view.rolloutAborted)
+    }
+
+    @Test
+    fun `rollout promote on an aborted service without a record retries the rollout and services show it aborted`() {
+        kubernetes.rollouts += rollout(desired = 2, weights = listOf(50), phase = "Degraded", aborted = true)
+
+        val view = service.services().services.single { it.name == "point-service" }
+        assertEquals(true, view.rolloutAborted)
+        assertEquals(ServiceHealth.DEGRADED, view.status)
+        assertNull(view.rolloutPaused)
+
+        service.promoteRollout("point-service", "me")
+        assertEquals(listOf("point-service"), kubernetes.retries)
+        assertTrue(kubernetes.promotes.isEmpty())
+
+        val e = org.junit.jupiter.api.assertThrows<com.example.deployservice.api.ApiException> { service.abortRollout("point-service", "me") }
+        assertEquals("not_paused", e.error)
     }
 }
