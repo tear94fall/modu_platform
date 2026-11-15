@@ -13,6 +13,7 @@ import com.example.deployservice.gateway.KubernetesGateway
 import com.example.deployservice.gateway.PodSnapshot
 import com.example.deployservice.gateway.RepoCommit
 import com.example.deployservice.gateway.RepoFile
+import com.example.deployservice.gateway.RolloutSnapshot
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -140,11 +141,29 @@ class FakeKubernetes : KubernetesGateway {
     var pods: List<PodSnapshot> = emptyList()
     private var last: DeploymentSnapshot? = null
 
+    /** Rollout 스냅샷 큐(비면 마지막 것을 되풀이). promote/promoteFull/abort 호출은 이름을 기록한다. */
+    val rollouts = ArrayDeque<RolloutSnapshot>()
+    var rolloutPods: List<PodSnapshot> = emptyList()
+    val promotes = mutableListOf<String>()
+    val fullPromotes = mutableListOf<String>()
+    val aborts = mutableListOf<String>()
+    private var lastRollout: RolloutSnapshot? = null
+
     override fun deployment(name: String): DeploymentSnapshot? {
         val next = snapshots.pollFirst() ?: last
         last = next
         return next
     }
     override fun pods(deploymentName: String) = pods
+
+    override fun rollout(name: String): RolloutSnapshot? {
+        val next = rollouts.pollFirst() ?: lastRollout
+        lastRollout = next
+        return next
+    }
+    override fun rolloutPods(name: String) = rolloutPods
+    override fun promote(name: String) { promotes += name }
+    override fun promoteFull(name: String) { fullPromotes += name }
+    override fun abort(name: String) { aborts += name }
 }
 

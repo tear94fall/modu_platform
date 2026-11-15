@@ -22,7 +22,7 @@ import java.time.Duration
  * 시작 도중 파드가 죽은 것이고 그때는 닫아도 된다.
  */
 class DeploymentStarter(
-    private val temporal: TemporalGateway,
+    val temporal: TemporalGateway,
     private val store: DeploymentStore,
     private val clock: Clock = Clock.systemUTC(),
 ) {
@@ -34,6 +34,10 @@ class DeploymentStarter(
         const val NOT_REGISTERED = "Temporal 에 배포를 등록하지 못했습니다"
         /** runId 없는 RUNNING 행을 "시작 진행 중" 으로 봐 주는 시간. temporal.start 는 보통 수십 ms, 길어도 몇 초다. */
         val ORPHAN_GRACE: Duration = Duration.ofMinutes(2)
+        /** DIRECT: 세 단계 합 최대 ~21분의 안전망. */
+        val DIRECT_TIMEOUT: Duration = Duration.ofMinutes(30)
+        /** CANARY: 사람 대기 상한 7일(워크플로 안에서 ABORT) + 되돌리기 여유. 여기 걸리는 건 비정상(워커 부재) — 기록은 고아 정리가 닫는다. */
+        val CANARY_TIMEOUT: Duration = Duration.ofDays(8)
     }
 
     fun start(record: DeploymentRecord, image: String): DeploymentRecord {
@@ -43,7 +47,11 @@ class DeploymentStarter(
             if (!store.addIfNoneRunning(record)) throw inProgress(record.service)
         }
         val runId = try {
-            temporal.start(workflowId, DeployInput(record.id, record.service, image, record.tag, record.by))
+            temporal.start(
+                workflowId,
+                DeployInput(record.id, record.service, image, record.tag, record.by, record.mode),
+                if (record.mode == DeployMode.CANARY) CANARY_TIMEOUT else DIRECT_TIMEOUT,
+            )
         } catch (e: WorkflowExecutionAlreadyStarted) {
             close(record.id, ALREADY_RUNNING)
             throw inProgress(record.service)

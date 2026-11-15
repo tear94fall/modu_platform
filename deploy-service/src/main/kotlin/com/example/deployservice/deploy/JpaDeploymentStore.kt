@@ -149,6 +149,8 @@ class JpaDeploymentStore(
         e.commitSha = r.commit?.sha
         e.commitUrl = r.commit?.url
         e.workflowRunId = r.workflowRunId
+        e.mode = r.mode.name
+        e.canaryJson = r.canary?.let { objectMapper.writeValueAsString(it.copy(live = null)) }   // live 는 조회 시점 값
         e.stepsJson = objectMapper.writeValueAsString(r.steps)
         e.rolloutJson = r.rollout?.let { objectMapper.writeValueAsString(it) }
     }
@@ -170,5 +172,7 @@ class JpaDeploymentStore(
         commit = e.commitSha?.let { sha -> CommitView(sha, e.commitUrl ?: "") },
         error = e.error,
         workflowRunId = e.workflowRunId,
+        mode = DeployMode.valueOf(e.mode),
+        canary = e.canaryJson?.let { objectMapper.readValue<CanaryView>(it) },
     )
 }

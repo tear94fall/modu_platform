@@ -75,6 +75,15 @@ class DeploymentEntity(
     @Column(name = "workflow_run_id", length = 64)
     var workflowRunId: String? = null,
 
+    /** DIRECT | CANARY ([DeployMode].name). 2026-11-15 추가(schema/changes/2026-11-16-deployment-canary.sql). */
+    @Column(name = "mode", length = 16, nullable = false)
+    var mode: String = DeployMode.DIRECT.name,
+
+    /** [CanaryView] JSON(live 제외). DIRECT 는 null. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "canary_json", columnDefinition = "json")
+    var canaryJson: String? = null,
+
     /** List<StepRecord> 를 JSON 으로. JdbcTypeCode(JSON) 이라 MySQL 은 cast(? as json), H2 는 ? format json 으로 묶인다(문자열은 그대로 통과). */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "steps_json", nullable = false, columnDefinition = "json")

@@ -83,7 +83,7 @@ class DeployStartGuardTest {
 
         assertEquals("deploy_in_progress", e.error)
         assertEquals(409, e.status.value())
-        verify(temporal, never()).start(any(), any()) // 워크플로는 시작조차 되지 않았다
+        verify(temporal, never()).start(any(), any(), any()) // 워크플로는 시작조차 되지 않았다
     }
 
     @Test
@@ -124,7 +124,7 @@ class DeployStartGuardTest {
         val barrier = CyclicBarrier(services.size)
         whenever(rw.saveAndFlush(any<DeploymentEntity>())).thenAnswer { barrier.await(10, TimeUnit.SECONDS); it.arguments[0] }
         val temporal: TemporalGateway = mock()
-        whenever(temporal.start(any(), any())).thenReturn("run-1")
+        whenever(temporal.start(any(), any(), any())).thenReturn("run-1")
         val starter = DeploymentStarter(temporal, store)
         val pool = Executors.newFixedThreadPool(services.size)
         try {

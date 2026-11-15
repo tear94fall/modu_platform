@@ -2,7 +2,33 @@ package com.example.deployservice.deploy
 
 import java.time.Instant
 
-enum class DeploymentStatus { RUNNING, SUCCEEDED, FAILED }
+/** ABORTED = 카나리 배포를 사람이(또는 7일 상한에 시스템이) 중단해 옛 버전으로 되돌린 것 — 실패가 아니다. */
+enum class DeploymentStatus { RUNNING, SUCCEEDED, FAILED, ABORTED }
+
+/** DIRECT = 한 번에 끝까지(기존 "배포"), CANARY = 단계마다 멈춰 사람이 다음 단계/중단을 정한다(2026-11-15). */
+enum class DeployMode { DIRECT, CANARY }
+
+/** 카나리 단계 이력 한 줄 — 누가 언제 몇 % 에서 무엇을(PROMOTE | ABORT) 했는가. */
+data class CanaryHistory(val step: Int, val weight: Int, val action: String, val by: String, val at: Instant)
+
+/** 조회 시점에 k8s 를 읽은 라이브 상태(저장하지 않는다). 대기 중 콘솔이 새/옛 파드 표를 그린다. */
+data class RolloutLive(val phase: String, val weight: Int, val pods: List<PodView>, val ready: Int, val desired: Int)
+
+/**
+ * 카나리 진행 상태(deployment.canary_json). [currentStep] 은 1부터, 0 = 첫 단계 전. [waiting] 이면 사람의 결정을 기다리는 중([waitingSince] 부터).
+ * [canaryPods]/[stablePods] 는 대기 시작 시점의 새/옛 파드 이름(에러 로그 조회·화면 표). [live] 는 조회 시점 값으로 채워지며 저장되지 않는다.
+ */
+data class CanaryView(
+    val totalSteps: Int,
+    val currentStep: Int,
+    val weight: Int,
+    val waiting: Boolean,
+    val waitingSince: Instant? = null,
+    val canaryPods: List<String> = emptyList(),
+    val stablePods: List<String> = emptyList(),
+    val history: List<CanaryHistory> = emptyList(),
+    val live: RolloutLive? = null,
+)
 
 /** 배포 단계. 순서대로 COMMIT → SYNC → ROLLOUT, 끝나면 DONE. */
 enum class Step { COMMIT, SYNC, ROLLOUT, DONE }
@@ -48,6 +74,10 @@ data class DeploymentRecord(
     val workflowRunId: String? = null,
     /** 콘솔 "Temporal 에서 보기" 링크 — 저장하지 않는다. 서비스 계층이 [TemporalLinks.decorate] 로 채운다(실행 id 가 없으면 null). */
     val workflowUrl: String? = null,
+    /** 배포 방식(deployment.mode). 옛 기록은 DIRECT. */
+    val mode: DeployMode = DeployMode.DIRECT,
+    /** 카나리 상태(deployment.canary_json). DIRECT 는 null. */
+    val canary: CanaryView? = null,
 ) {
     fun withStep(name: Step, update: (StepRecord) -> StepRecord): DeploymentRecord =
         copy(steps = steps.map { if (it.name == name) update(it) else it })

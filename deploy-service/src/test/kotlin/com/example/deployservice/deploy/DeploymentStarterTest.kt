@@ -42,14 +42,25 @@ class DeploymentStarterTest {
 
     @Test
     fun `a started workflow's run id is stored`() {
-        whenever(temporal.start(eq("deploy-point-service"), any())).thenReturn("run-1")
+        whenever(temporal.start(eq("deploy-point-service"), any(), any())).thenReturn("run-1")
 
         val started = starter.start(record("dep-1"), IMAGE)
 
         assertEquals("run-1", started.workflowRunId)
         assertEquals("run-1", store.get("dep-1")?.workflowRunId)
         assertEquals(DeploymentStatus.RUNNING, store.get("dep-1")?.status)
-        verify(temporal).start("deploy-point-service", DeployInput("dep-1", "point-service", IMAGE, "develop-5708871", "me"))
+        verify(temporal).start("deploy-point-service", DeployInput("dep-1", "point-service", IMAGE, "develop-5708871", "me", DeployMode.DIRECT), DeploymentStarter.DIRECT_TIMEOUT)
+    }
+
+    @Test
+    fun `a canary deployment is started with CANARY mode and the eight day execution timeout`() {
+        whenever(temporal.start(eq("deploy-point-service"), any(), any())).thenReturn("run-c")
+
+        starter.start(record("dep-c").copy(mode = DeployMode.CANARY), IMAGE)
+
+        verify(temporal).start("deploy-point-service", DeployInput("dep-c", "point-service", IMAGE, "develop-5708871", "me", DeployMode.CANARY), DeploymentStarter.CANARY_TIMEOUT)
+        assertEquals(Duration.ofDays(8), DeploymentStarter.CANARY_TIMEOUT)
+        assertEquals(Duration.ofMinutes(30), DeploymentStarter.DIRECT_TIMEOUT)
     }
 
     @Test
@@ -63,14 +74,14 @@ class DeploymentStarterTest {
         assertEquals(409, e.status.value())
         assertEquals(DeploymentStatus.RUNNING, store.get("dep-1")?.status)
         assertNull(store.get("dep-2"))
-        verify(temporal, never()).start(any(), any())
+        verify(temporal, never()).start(any(), any(), any())
     }
 
     @Test
     fun `an orphan record whose workflow is gone is closed and the new deployment starts`() {
         store.add(record("dep-1")) // 스레드 시절 기록: runId 없음, 10분 전 시작
         whenever(temporal.status("deploy-point-service", null)).thenReturn(null) // 실행이 없다
-        whenever(temporal.start(eq("deploy-point-service"), any())).thenReturn("run-2")
+        whenever(temporal.start(eq("deploy-point-service"), any(), any())).thenReturn("run-2")
 
         val started = starter.start(record("dep-2"), IMAGE)
 
@@ -86,7 +97,7 @@ class DeploymentStarterTest {
         store.add(record("dep-1", runId = "run-1"))
         whenever(temporal.status("deploy-point-service", null)).thenReturn(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TIMED_OUT)
         whenever(temporal.status("deploy-point-service", "run-1")).thenReturn(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TIMED_OUT)
-        whenever(temporal.start(eq("deploy-point-service"), any())).thenReturn("run-2")
+        whenever(temporal.start(eq("deploy-point-service"), any(), any())).thenReturn("run-2")
 
         starter.start(record("dep-2"), IMAGE)
 
@@ -96,7 +107,7 @@ class DeploymentStarterTest {
 
     @Test
     fun `already started workflow closes the record and is a 409`() {
-        whenever(temporal.start(eq("deploy-point-service"), any())).thenThrow(WorkflowExecutionAlreadyStarted(WorkflowExecution.getDefaultInstance(), "DeployWorkflow", null))
+        whenever(temporal.start(eq("deploy-point-service"), any(), any())).thenThrow(WorkflowExecutionAlreadyStarted(WorkflowExecution.getDefaultInstance(), "DeployWorkflow", null))
 
         val e = assertThrows<ApiException> { starter.start(record("dep-1"), IMAGE) }
 
@@ -108,7 +119,7 @@ class DeploymentStarterTest {
 
     @Test
     fun `temporal unavailable closes the record and is a 503`() {
-        whenever(temporal.start(eq("deploy-point-service"), any())).thenThrow(StatusRuntimeException(Status.UNAVAILABLE))
+        whenever(temporal.start(eq("deploy-point-service"), any(), any())).thenThrow(StatusRuntimeException(Status.UNAVAILABLE))
 
         val e = assertThrows<ApiException> { starter.start(record("dep-1"), IMAGE) }
 
@@ -147,7 +158,7 @@ class DeploymentStarterTest {
         assertEquals("deploy_in_progress", e.error)
         assertEquals(DeploymentStatus.RUNNING, store.get("dep-a")?.status)
         assertNull(store.get("dep-b"))
-        verify(temporal, never()).start(any(), any())
+        verify(temporal, never()).start(any(), any(), any())
     }
 
     @Test

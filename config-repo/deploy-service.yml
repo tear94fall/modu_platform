@@ -54,6 +54,10 @@ deploy:
     namespace: platform
     task-queue: ${TEMPORAL_TASK_QUEUE:deploy}
     public-url: http://localhost:8233     # 콘솔 "Temporal 에서 보기"(맥 루프백 전용 UI, overlays/dev temporal-ui-lb)
+  # 카나리 대기 중 "새 파드 에러 로그"(OpenSearch, 2026-11-15). 실패해도 배포는 막지 않는다.
+  logs:
+    opensearch-url: http://opensearch:9200
+    index: modu-app-logs*
   store:
     capacity: 500            # 목록 API 가 돌려주는 최대 건수(DB 에는 전부 남는다)
   services:

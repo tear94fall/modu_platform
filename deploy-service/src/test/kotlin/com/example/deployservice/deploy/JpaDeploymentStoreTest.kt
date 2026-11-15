@@ -108,6 +108,28 @@ class JpaDeploymentStoreTest(
     }
 
     @Test
+    fun `mode, canary view and ABORTED status round-trip, live part is not stored`() {
+        val canary = CanaryView(
+            totalSteps = 1, currentStep = 1, weight = 50, waiting = true, waitingSince = t0,
+            canaryPods = listOf("point-service-new-1"), stablePods = listOf("point-service-old-1"),
+            history = listOf(CanaryHistory(step = 1, weight = 50, action = "PROMOTE", by = "me", at = t0)),
+            live = RolloutLive(phase = "Paused", weight = 50, pods = emptyList(), ready = 2, desired = 2),
+        )
+        val r = record("dep-canary").copy(mode = DeployMode.CANARY, status = DeploymentStatus.ABORTED, canary = canary)
+        store.add(r)
+
+        val e = repository.findById(r.id).get()
+        assertEquals("CANARY", e.mode)
+        assertEquals("ABORTED", e.status)
+        assertTrue(e.canaryJson!!.contains("\"weight\":50"), e.canaryJson)
+        val back = store.get(r.id)!!
+        assertEquals(DeployMode.CANARY, back.mode)
+        assertEquals(DeploymentStatus.ABORTED, back.status)
+        assertEquals(canary.copy(live = null), back.canary) // live 는 조회 시점 값이라 저장하지 않는다
+        assertEquals(DeployMode.DIRECT, store.get(record("dep-plain").also(store::add).id)!!.mode)
+    }
+
+    @Test
     fun `steps and rollout survive the JSON round trip`() {
         store.add(record("a"))
         val at = Instant.parse("2026-10-07T08:01:02.345678Z")
