@@ -2,6 +2,8 @@ package com.example.deployservice.deploy.workflow
 
 import com.example.deployservice.api.UpstreamException
 import com.example.deployservice.config.DeployProperties
+import com.example.deployservice.deploy.CanaryHistory
+import com.example.deployservice.deploy.CanaryView
 import com.example.deployservice.deploy.CommitView
 import com.example.deployservice.deploy.DeploymentStatus
 import com.example.deployservice.deploy.DeploymentStore
@@ -16,6 +18,7 @@ import com.example.deployservice.gateway.ArgoResource
 import com.example.deployservice.gateway.GitHubGateway
 import com.example.deployservice.gateway.KubernetesGateway
 import com.example.deployservice.gateway.PodSnapshot
+import com.example.deployservice.gateway.RolloutSnapshot
 import io.temporal.failure.ApplicationFailure
 import io.temporal.spring.boot.ActivityImpl
 import org.slf4j.LoggerFactory
@@ -129,6 +132,34 @@ class KubernetesActivitiesImpl(private val properties: DeployProperties, private
         return RolloutProbe(view, deployment.rolledOut, failing)
     }
 
+    override fun rolloutStatus2(service: String): RolloutProbe2 {
+        val snapshot = kubernetes.rollout(service)
+            ?: throw ApplicationFailure.newNonRetryableFailure("Rollout $service 가 네임스페이스 ${properties.kubernetes.namespace} 에 없습니다.", "kubernetes")
+        val pods = runCatching { kubernetes.rolloutPods(service) }
+            .getOrElse { log.warn("rollout pods of {} unavailable: {}", service, it.message); emptyList() }
+        val failing = pods.firstOrNull { it.fromNewestReplicaSet && it.reason in FAILING_POD_REASONS }?.let(::podFailureMessage)
+        return RolloutProbe2(
+            desired = snapshot.desired, updated = snapshot.updated, ready = snapshot.ready, available = snapshot.available, phase = snapshot.phase,
+            totalSteps = snapshot.totalSteps, currentStep = stepOf(snapshot), currentWeight = snapshot.currentWeight,
+            rolledOut = snapshot.rolledOut, pausedAtStep = snapshot.pausedAtStep, aborted = snapshot.aborted,
+            pods = pods.map { PodView(it.name, it.phase, it.ready, it.reason) },
+            canaryPods = pods.filter { it.fromNewestReplicaSet }.map { it.name },
+            stablePods = pods.filter { !it.fromNewestReplicaSet }.map { it.name },
+            failingPod = failing,
+        )
+    }
+
+    /** steps = [setWeight, pause, …]: 멈춘 index i → 단계 번호 ceil(i/2) (1부터). 끝났으면 totalSteps, 시작 전이면 0. */
+    private fun stepOf(s: RolloutSnapshot): Int {
+        val idx = s.currentStepIndex ?: return 0
+        if (idx >= s.stepCount) return s.totalSteps
+        return (idx + 1) / 2
+    }
+
+    override fun promote(service: String) = kubernetes.promote(service)
+    override fun promoteFull(service: String) = kubernetes.promoteFull(service)
+    override fun abort(service: String) = kubernetes.abort(service)
+
     private fun podFailureMessage(pod: PodSnapshot): String =
         "파드 ${pod.name} ${pod.reason}" + (pod.message.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
 }
@@ -184,6 +215,26 @@ class RecordActivitiesImpl(private val store: DeploymentStore, private val clock
             if (r.status != DeploymentStatus.RUNNING) return@update r
             r.copy(status = DeploymentStatus.FAILED, error = error, finishedAt = at)
                 .withStep(step) { s -> s.copy(status = StepStatus.FAILED, message = error, startedAt = s.startedAt ?: at, finishedAt = at) }
+        }
+    }
+
+    override fun canary(id: String, view: CanaryView) {
+        store.update(id) { r -> r.copy(canary = view.copy(history = r.canary?.history ?: view.history, live = null)) }
+    }
+
+    override fun canaryHistory(id: String, entry: CanaryHistory) {
+        store.update(id) { r ->
+            val c = r.canary ?: CanaryView(totalSteps = 0, currentStep = entry.step, weight = entry.weight, waiting = false)
+            r.copy(canary = c.copy(waiting = false, history = c.history + entry))
+        }
+    }
+
+    override fun aborted(id: String, by: String, reason: String) {
+        val at = now()
+        store.update(id) { r ->
+            if (r.status != DeploymentStatus.RUNNING) return@update r
+            r.copy(status = DeploymentStatus.ABORTED, error = reason, finishedAt = at, canary = r.canary?.copy(waiting = false))
+                .withStep(Step.ROLLOUT) { s -> s.copy(status = StepStatus.FAILED, message = "중단됨($by)", startedAt = s.startedAt ?: at, finishedAt = at) }
         }
     }
 }

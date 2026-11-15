@@ -3,6 +3,7 @@ package com.example.deployservice.deploy.workflow
 import com.example.deployservice.config.TemporalConverters
 import com.example.deployservice.deploy.DeployProps.IMAGE
 import com.example.deployservice.deploy.DeployProps.props
+import com.example.deployservice.deploy.DeployMode
 import com.example.deployservice.deploy.DeploymentRecord
 import com.example.deployservice.deploy.DeploymentStatus
 import com.example.deployservice.deploy.FakeArgo
@@ -18,6 +19,10 @@ import com.example.deployservice.gateway.ArgoOperationState
 import com.example.deployservice.gateway.ArgoResource
 import com.example.deployservice.gateway.DeploymentSnapshot
 import com.example.deployservice.gateway.PodSnapshot
+import com.example.deployservice.gateway.RolloutSnapshot
+import io.temporal.client.WorkflowClient
+import io.temporal.client.WorkflowStub
+import java.time.Duration
 import io.temporal.client.WorkflowClientOptions
 import io.temporal.client.WorkflowFailedException
 import io.temporal.client.WorkflowOptions
@@ -80,12 +85,25 @@ class DeployWorkflowTest {
     @AfterEach
     fun tearDown() = env.close()
 
-    private fun snapshot(generation: Long = 2, observed: Long = 2, desired: Int = 1, updated: Int = 1, ready: Int = 1, available: Int = 1, replicas: Int = updated) =
-        DeploymentSnapshot("point-service", generation, observed, desired, replicas, updated, ready, available, "develop-5708871", "True", "True")
+    /** Rollout 스냅샷(v2 경로). 단계 없는 Rollout = 지금의 롤링. */
+    private fun rollout(desired: Int = 1, updated: Int = 1, ready: Int = 1, available: Int = 1, phase: String = "Healthy", stable: String = "new", current: String = "new",
+                        weights: List<Int> = emptyList(), stepIndex: Int? = null, paused: Boolean = false, aborted: Boolean = false) =
+        RolloutSnapshot("point-service", desired, updated, updated, ready, available, phase, null, stepIndex, weights, weights.size * 2, paused, aborted, current, stable, "develop-5708871")
 
-    private fun start(tag: String = "develop-5708871"): DeployInput {
-        store.add(DeploymentRecord(id = "dep-1", service = "point-service", tag = tag, by = "joonsub2990@gmail.com", startedAt = clock.instant()))
-        return DeployInput("dep-1", "point-service", IMAGE, tag, "joonsub2990@gmail.com")
+    private fun start(tag: String = "develop-5708871", mode: DeployMode = DeployMode.DIRECT): DeployInput {
+        store.add(DeploymentRecord(id = "dep-1", service = "point-service", tag = tag, by = "joonsub2990@gmail.com", startedAt = clock.instant(), mode = mode))
+        return DeployInput("dep-1", "point-service", IMAGE, tag, "joonsub2990@gmail.com", mode)
+    }
+
+    /** 비동기로 시작해 Signal 을 보낼 수 있게. 끝나면 결과를 기다린다. */
+    private fun startAsync(input: DeployInput): WorkflowStub {
+        WorkflowClient.start(workflow::run, input)
+        return WorkflowStub.fromTyped(workflow)
+    }
+
+    private fun waitUntilWaiting() {
+        for (i in 0 until 50) { if (store.get("dep-1")?.canary?.waiting == true) return; Thread.sleep(100) }
+        throw AssertionError("canary never reached the waiting state: ${store.get("dep-1")?.canary}")
     }
 
     private fun succeedArgoAfter(polls: Int) {
@@ -95,8 +113,8 @@ class DeployWorkflowTest {
     }
 
     private fun readyRollout() {
-        k8s.snapshots += snapshot(generation = 3, observed = 3, desired = 1, updated = 1, ready = 1, available = 1)
-        k8s.pods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true))
+        k8s.rollouts += rollout()
+        k8s.rolloutPods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true))
     }
 
     private fun runExpectingFailure(input: DeployInput): WorkflowFailedException = assertThrows<WorkflowFailedException> { workflow.run(input) }
@@ -106,15 +124,16 @@ class DeployWorkflowTest {
         val input = start()
         argo.refreshesUntilSeen = 2
         succeedArgoAfter(2)
-        k8s.snapshots += snapshot(generation = 3, observed = 2, updated = 0, ready = 1, available = 1, replicas = 1)
-        k8s.snapshots += snapshot(generation = 3, observed = 3, desired = 2, updated = 2, ready = 1, available = 1, replicas = 2)
-        k8s.snapshots += snapshot(generation = 3, observed = 3, desired = 2, updated = 2, ready = 2, available = 2, replicas = 2)
-        k8s.pods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true))
+        k8s.rollouts += rollout(desired = 2, updated = 0, ready = 1, available = 1, phase = "Progressing", stable = "old", current = "new")
+        k8s.rollouts += rollout(desired = 2, updated = 2, ready = 1, available = 1, phase = "Progressing", stable = "old", current = "new")
+        k8s.rollouts += rollout(desired = 2, updated = 2, ready = 2, available = 2)
+        k8s.rolloutPods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true))
 
         workflow.run(input)
 
         val r = store.get("dep-1")!!
         assertEquals(DeploymentStatus.SUCCEEDED, r.status)
+        assertEquals(listOf("point-service"), k8s.fullPromotes) // DIRECT 는 단계를 전부 건너뛴다
         assertEquals(Step.DONE, r.step)
         assertEquals(100, r.percent)
         assertEquals("develop-35db83f", r.previousTag)
@@ -243,8 +262,8 @@ class DeployWorkflowTest {
     fun `crash looping pod of the new replica set fails ROLLOUT with the reason`() {
         val input = start()
         succeedArgoAfter(0)
-        k8s.snapshots += snapshot(generation = 3, observed = 3, desired = 2, updated = 2, ready = 1, available = 1, replicas = 2)
-        k8s.pods = listOf(
+        k8s.rollouts += rollout(desired = 2, updated = 2, ready = 1, available = 1, phase = "Progressing", stable = "old", current = "new")
+        k8s.rolloutPods = listOf(
             PodSnapshot("point-service-old-1", "Running", true, "", "", false),
             PodSnapshot("point-service-new-1", "Running", false, "CrashLoopBackOff", "back-off 5m0s restarting failed container", true),
         )
@@ -264,8 +283,8 @@ class DeployWorkflowTest {
     fun `old replica set pod failures are ignored and rollout times out`() {
         val input = start()
         succeedArgoAfter(0)
-        k8s.snapshots += snapshot(generation = 3, observed = 3, desired = 1, updated = 1, ready = 0, available = 0)
-        k8s.pods = listOf(PodSnapshot("point-service-old-1", "Running", false, "CrashLoopBackOff", "x", false))
+        k8s.rollouts += rollout(desired = 1, updated = 1, ready = 0, available = 0, phase = "Progressing", stable = "old", current = "new")
+        k8s.rolloutPods = listOf(PodSnapshot("point-service-old-1", "Running", false, "CrashLoopBackOff", "x", false))
 
         runExpectingFailure(input)
 
@@ -279,15 +298,114 @@ class DeployWorkflowTest {
     fun `rollout percent follows ready over desired`() {
         val input = start()
         succeedArgoAfter(0)
-        k8s.snapshots += snapshot(generation = 3, observed = 3, desired = 4, updated = 4, ready = 1, available = 1)
-        k8s.snapshots += snapshot(generation = 3, observed = 3, desired = 4, updated = 4, ready = 3, available = 3)
-        k8s.snapshots += snapshot(generation = 3, observed = 3, desired = 4, updated = 4, ready = 4, available = 4)
-        k8s.pods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true))
+        k8s.rollouts += rollout(desired = 4, updated = 4, ready = 1, available = 1, phase = "Progressing", stable = "old", current = "new")
+        k8s.rollouts += rollout(desired = 4, updated = 4, ready = 3, available = 3, phase = "Progressing", stable = "old", current = "new")
+        k8s.rollouts += rollout(desired = 4, updated = 4, ready = 4, available = 4)
+        k8s.rolloutPods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true))
 
         workflow.run(input)
 
         assertEquals(100, store.get("dep-1")!!.percent)
         assertEquals("준비 4/4", store.get("dep-1")!!.steps[2].message)
+    }
+
+    // ---- 카나리(CANARY) ----------------------------------------------------------------------------------------------------
+
+    /** 파드 2개: 50% 에서 멈춤(Paused, step index 1) → promote Signal → Healthy. */
+    private fun pausedAt50() = rollout(desired = 2, updated = 1, ready = 2, available = 2, phase = "Paused", stable = "old", current = "new", weights = listOf(50), stepIndex = 1, paused = true)
+
+    @Test
+    fun `canary waits at the first step until a promote signal, then finishes with history`() {
+        val input = start(mode = DeployMode.CANARY)
+        succeedArgoAfter(0)
+        k8s.rollouts += pausedAt50()
+        k8s.rolloutPods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true), PodSnapshot("point-service-old-1", "Running", true, "", "", false))
+        val stub = startAsync(input)
+        waitUntilWaiting()
+
+        val waiting = store.get("dep-1")!!.canary!!
+        assertEquals(50, waiting.weight); assertEquals(1, waiting.currentStep); assertEquals(1, waiting.totalSteps)
+        assertEquals(listOf("point-service-new-1"), waiting.canaryPods); assertEquals(listOf("point-service-old-1"), waiting.stablePods)
+        assertNotNull(waiting.waitingSince)
+        assertTrue(k8s.fullPromotes.isEmpty())
+
+        k8s.rollouts += rollout(desired = 2, updated = 2, ready = 2, available = 2, weights = listOf(50), stepIndex = 2)
+        workflow.promote("joonsub2990@gmail.com")
+        stub.getResult(Void::class.java)
+
+        val r = store.get("dep-1")!!
+        assertEquals(DeploymentStatus.SUCCEEDED, r.status)
+        assertEquals(listOf("point-service"), k8s.promotes)
+        assertEquals(1, r.canary!!.history.size)
+        assertEquals("PROMOTE", r.canary!!.history[0].action); assertEquals(50, r.canary!!.history[0].weight); assertEquals("joonsub2990@gmail.com", r.canary!!.history[0].by)
+        assertEquals(false, r.canary!!.waiting)
+        assertEquals("준비 2/2", r.steps[2].message)
+    }
+
+    @Test
+    fun `canary abort restores stable, reverts the tag in git and records ABORTED`() {
+        val input = start(mode = DeployMode.CANARY)
+        succeedArgoAfter(0)
+        k8s.rollouts += pausedAt50()
+        k8s.rolloutPods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true), PodSnapshot("point-service-old-1", "Running", true, "", "", false))
+        val stub = startAsync(input)
+        waitUntilWaiting()
+
+        // abort 뒤: stable 로 복귀(aborted, ready == desired) → 이전 태그 커밋 → Sync → Healthy(템플릿이 옛 태그로 돌아옴)
+        k8s.rollouts += rollout(desired = 2, updated = 0, ready = 2, available = 2, phase = "Degraded", stable = "old", current = "new", weights = listOf(50), stepIndex = 1, aborted = true)
+        k8s.rollouts += rollout(desired = 2, updated = 2, ready = 2, available = 2, stable = "old", current = "old", weights = listOf(50))
+        argo.pendingRevision = "c0ffee1234567890"
+        argo.phases += ArgoOperationState("Succeeded", "ok", clock.instant(), "c0ffee1234567890")
+        workflow.abort("joonsub2990@gmail.com")
+        stub.getResult(Void::class.java)
+
+        val r = store.get("dep-1")!!
+        assertEquals(DeploymentStatus.ABORTED, r.status)
+        assertEquals(listOf("point-service"), k8s.aborts)
+        assertEquals(2, github.puts.size, "새 태그 커밋 + 이전 태그 원복 커밋")
+        assertTrue(github.puts[1].first.contains("newTag: develop-35db83f"), "git 은 이전 태그로")
+        assertEquals("ABORT", r.canary!!.history.single().action)
+        assertNotNull(r.finishedAt)
+        assertEquals(2, argo.syncs.size, "원복도 Sync 한다")
+    }
+
+    @Test
+    fun `canary waiting longer than seven days is aborted by the system`() {
+        val input = start(mode = DeployMode.CANARY)
+        succeedArgoAfter(0)
+        k8s.rollouts += pausedAt50()
+        k8s.rolloutPods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true))
+        val stub = startAsync(input)
+        waitUntilWaiting()
+        // 아무도 누르지 않는다. 시간 건너뛰기: await(1h) × 168 → 시스템 ABORT. abort 뒤 복귀·원복·Sync 스냅샷
+        argo.pendingRevision = "c0ffee1234567890"
+        argo.phases += ArgoOperationState("Succeeded", "ok", clock.instant(), "c0ffee1234567890")
+        env.sleep(Duration.ofDays(7).plusMinutes(5))
+        k8s.rollouts += rollout(desired = 2, updated = 0, ready = 2, available = 2, phase = "Degraded", stable = "old", current = "new", weights = listOf(50), stepIndex = 1, aborted = true)
+        k8s.rollouts += rollout(desired = 2, updated = 2, ready = 2, available = 2, stable = "old", current = "old", weights = listOf(50))
+        stub.getResult(Void::class.java)
+
+        val r = store.get("dep-1")!!
+        assertEquals(DeploymentStatus.ABORTED, r.status)
+        assertEquals("system", r.canary!!.history.single().by)
+        assertTrue(r.error!!.contains("7일"), r.error)
+    }
+
+    @Test
+    fun `a crash looping canary pod fails the deployment during the waiting heartbeat`() {
+        val input = start(mode = DeployMode.CANARY)
+        succeedArgoAfter(0)
+        k8s.rollouts += pausedAt50()
+        k8s.rolloutPods = listOf(PodSnapshot("point-service-new-1", "Running", true, "", "", true))
+        val stub = startAsync(input)
+        waitUntilWaiting()
+        k8s.rolloutPods = listOf(PodSnapshot("point-service-new-1", "Running", false, "CrashLoopBackOff", "boom", true))
+        env.sleep(Duration.ofMinutes(61))
+
+        assertThrows<WorkflowFailedException> { stub.getResult(Void::class.java) }
+        val r = store.get("dep-1")!!
+        assertEquals(DeploymentStatus.FAILED, r.status)
+        assertEquals("파드 point-service-new-1 CrashLoopBackOff: boom", r.error)
     }
 
     companion object {

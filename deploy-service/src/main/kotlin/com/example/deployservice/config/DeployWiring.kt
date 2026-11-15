@@ -16,6 +16,8 @@ import com.example.deployservice.gateway.GhcrRegistryGateway
 import com.example.deployservice.gateway.GitHubGateway
 import com.example.deployservice.gateway.GitHubRestGateway
 import com.example.deployservice.gateway.KubernetesGateway
+import com.example.deployservice.gateway.LogsGateway
+import com.example.deployservice.gateway.OpenSearchLogsGateway
 import com.example.deployservice.gateway.WorkflowClientTemporalGateway
 import io.temporal.client.WorkflowClient
 import com.example.deployservice.github.GitHubAppCredentials
@@ -141,6 +143,11 @@ class DeployWiring {
     fun kubernetesGateway(client: KubernetesClient, properties: DeployProperties): KubernetesGateway =
         Fabric8KubernetesGateway(client, properties.kubernetes.namespace)
 
+    /** 카나리 대기 중 새 파드의 ERROR 로그(OpenSearch). 실패해도 배포를 막지 않는다(ErrorLogs.error). */
+    @Bean
+    fun logsGateway(properties: DeployProperties): LogsGateway =
+        OpenSearchLogsGateway(RestClient.builder().baseUrl(properties.logs.opensearchUrl.trimEnd('/')).requestFactory(requestFactory()).build(), properties.logs.index)
+
     /** 배포 워크플로 시작·조회. WorkflowClient 는 temporal-spring-boot-starter 가 만든다(spring.temporal.*). */
     @Bean
     fun temporalGateway(client: WorkflowClient, properties: DeployProperties): TemporalGateway = WorkflowClientTemporalGateway(client, properties)
@@ -157,7 +164,8 @@ class DeployWiring {
         store: DeploymentStore,
         starter: DeploymentStarter,
         clock: Clock,
-    ): DeployService = DefaultDeployService(properties, github, registry, kubernetes, store, starter, clock)
+        logs: LogsGateway,
+    ): DeployService = DefaultDeployService(properties, github, registry, kubernetes, store, starter, clock, logs)
 
     private fun requestFactory() = SimpleClientHttpRequestFactory().apply {
         setConnectTimeout(Duration.ofSeconds(10))

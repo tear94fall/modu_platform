@@ -1,5 +1,8 @@
 package com.example.deployservice.deploy.workflow
 
+import com.example.deployservice.deploy.CanaryHistory
+import com.example.deployservice.deploy.CanaryView
+import com.example.deployservice.deploy.PodView
 import com.example.deployservice.deploy.RolloutView
 import com.example.deployservice.deploy.Step
 import io.temporal.activity.ActivityInterface
@@ -17,6 +20,30 @@ data class ArgoOp(val phase: String, val message: String?, val terminal: Boolean
 
 /** 롤아웃 한 번 들여다본 결과. [failingPod] 는 새 ReplicaSet 파드가 CrashLoopBackOff 등이면 그 메시지(배포 실패 사유), 아니면 null. */
 data class RolloutProbe(val view: RolloutView, val rolledOut: Boolean, val failingPod: String?)
+
+/**
+ * Rollout(Argo Rollouts) 기준 롤아웃 상태(v2). Temporal 페이로드로 오가므로 **순수 필드만**(계산 프로퍼티가 있으면 Jackson 역직렬화가 실패해 워크플로 태스크가 무한 재시도된다 — 2026-11-15 교훈).
+ * [currentStep] 은 1부터(0 = 첫 단계 전, totalSteps = 끝). [pods] 는 새/옛 구분이 있는 파드 표, [failingPod] 는 새 RS 파드의 CrashLoop 등.
+ */
+data class RolloutProbe2(
+    val desired: Int,
+    val updated: Int,
+    val ready: Int,
+    val available: Int,
+    val phase: String,
+    val totalSteps: Int,
+    val currentStep: Int,
+    val currentWeight: Int,
+    val rolledOut: Boolean,
+    val pausedAtStep: Boolean,
+    val aborted: Boolean,
+    val pods: List<PodView>,
+    val canaryPods: List<String>,
+    val stablePods: List<String>,
+    val failingPod: String?,
+) {
+    fun view(): RolloutView = RolloutView(desired, updated, ready, available, pods)
+}
 
 @ActivityInterface
 interface CommitActivities {
@@ -42,8 +69,20 @@ interface ArgoActivities {
 
 @ActivityInterface
 interface KubernetesActivities {
-    /** Deployment·파드 스냅샷. Deployment 가 없으면 재시도 불가 실패. */
+    /** (v1, Deployment 기준 — getVersion 옛 경로가 쓴다) Deployment·파드 스냅샷. Deployment 가 없으면 재시도 불가 실패. */
     fun rolloutStatus(service: String): RolloutProbe
+
+    /** (v2) Rollout·파드 스냅샷. Rollout 이 없으면 재시도 불가 실패. */
+    fun rolloutStatus2(service: String): RolloutProbe2
+
+    /** 일시정지 해제(다음 단계). 멱등. */
+    fun promote(service: String)
+
+    /** 남은 단계 전부 건너뛰고 끝까지(DIRECT). 멱등. */
+    fun promoteFull(service: String)
+
+    /** 중단 — stable ReplicaSet 으로. 멱등. */
+    fun abort(service: String)
 }
 
 /** 배포 기록(MySQL deployment) 쓰기 — 로컬 액티비티로 부른다. 시각은 구현의 Clock. */
@@ -58,4 +97,13 @@ interface RecordActivities {
     fun succeed(id: String)
     /** RUNNING 인 기록만 FAILED 로 닫는다(이미 닫힌 기록은 건드리지 않는다). */
     fun fail(id: String, step: Step, error: String)
+
+    /** 카나리 상태 덮어쓰기(history 는 기존 것을 유지하고 나머지만 바꾼다). */
+    fun canary(id: String, view: CanaryView)
+
+    /** 단계 이력 한 줄 추가 + waiting=false. */
+    fun canaryHistory(id: String, entry: CanaryHistory)
+
+    /** 중단으로 닫는다(status ABORTED, ROLLOUT 단계 FAILED 표시 + 메시지, finishedAt). RUNNING 인 기록만. */
+    fun aborted(id: String, by: String, reason: String)
 }

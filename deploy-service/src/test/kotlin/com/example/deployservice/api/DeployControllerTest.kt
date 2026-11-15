@@ -2,6 +2,7 @@ package com.example.deployservice.api
 
 import com.example.deployservice.gateway.StaffLookup
 import com.example.deployservice.deploy.ArgoCdView
+import com.example.deployservice.deploy.DeployMode
 import com.example.deployservice.deploy.DeployService
 import com.example.deployservice.deploy.DeploymentRecord
 import com.example.deployservice.deploy.DeploymentStartedResponse
@@ -55,7 +56,7 @@ class DeployControllerTest(@Autowired private val mvc: MockMvc) {
             content = """{"tag":"develop-5708871"}"""
         }.andExpect { status { isUnauthorized() } }
         verify(service, never()).services()
-        verify(service, never()).deploy(any(), any(), any(), anyOrNull())
+        verify(service, never()).deploy(any(), any(), any(), anyOrNull(), any())
     }
 
     @Test
@@ -105,7 +106,7 @@ class DeployControllerTest(@Autowired private val mvc: MockMvc) {
     @Test
     fun `deploy returns 202 and passes the staff identity`() {
         whenever(staff.displayName("104614857372392207989")).thenReturn("임준섭")
-        whenever(service.deploy(eq("point-service"), eq("develop-5708871"), eq("임준섭"), eq("104614857372392207989"))).thenReturn(
+        whenever(service.deploy(eq("point-service"), eq("develop-5708871"), eq("임준섭"), eq("104614857372392207989"), eq(DeployMode.DIRECT))).thenReturn(
             DeploymentStartedResponse("dep-20261006-134512-ab12", "point-service", "develop-5708871", "임준섭", "104614857372392207989", now, DeploymentStatus.RUNNING, Step.COMMIT, 5),
         )
 
@@ -126,7 +127,7 @@ class DeployControllerTest(@Autowired private val mvc: MockMvc) {
 
     @Test
     fun `deploy without identity header records unknown and without tag is 400`() {
-        whenever(service.deploy(eq("point-service"), eq("develop-5708871"), eq("unknown"), eq("unknown"))).thenReturn(
+        whenever(service.deploy(eq("point-service"), eq("develop-5708871"), eq("unknown"), eq("unknown"), eq(DeployMode.DIRECT))).thenReturn(
             DeploymentStartedResponse("dep-1", "point-service", "develop-5708871", "unknown", "unknown", now, DeploymentStatus.RUNNING, Step.COMMIT, 5),
         )
 
@@ -151,7 +152,7 @@ class DeployControllerTest(@Autowired private val mvc: MockMvc) {
 
     @Test
     fun `service errors become error bodies with their status`() {
-        whenever(service.deploy(any(), any(), any(), anyOrNull())).thenThrow(ApiException.conflict("deploy_in_progress", "point-service 는 이미 배포 중입니다."))
+        whenever(service.deploy(any(), any(), any(), anyOrNull(), any())).thenThrow(ApiException.conflict("deploy_in_progress", "point-service 는 이미 배포 중입니다."))
         whenever(service.deployment("nope")).thenThrow(ApiException.notFound("deployment_not_found", "배포 기록이 없습니다: nope"))
         whenever(service.tags("point-service")).thenThrow(UpstreamException("github", "GHCR 태그 조회 실패"))
 
@@ -213,5 +214,47 @@ class DeployControllerTest(@Autowired private val mvc: MockMvc) {
             status { isAccepted() }
             jsonPath("$.tag") { value("develop-35db83f") }
         }
+    }
+
+    @Test
+    fun `deploy passes the canary mode, promote and abort are 202, errors returns the log summary`() {
+        whenever(staff.displayName("u1")).thenReturn("me")
+        whenever(service.deploy(eq("point-service"), eq("develop-5708871"), eq("me"), eq("u1"), eq(DeployMode.CANARY))).thenReturn(
+            DeploymentStartedResponse("dep-c", "point-service", "develop-5708871", "me", "u1", now, DeploymentStatus.RUNNING, Step.COMMIT, 5),
+        )
+        mvc.post("/api-system/deploy/services/point-service") {
+            header("X-Internal-Token", "test-token"); header("X-Auth-User-Id", "u1"); contentType = MediaType.APPLICATION_JSON
+            content = """{"tag":"develop-5708871","mode":"CANARY"}"""
+        }.andExpect { status { isAccepted() }; jsonPath("$.id") { value("dep-c") } }
+
+        mvc.post("/api-system/deploy/deployments/dep-c/promote") { header("X-Internal-Token", "test-token"); header("X-Auth-User-Id", "u1") }
+            .andExpect { status { isAccepted() } }
+        verify(service).promote("dep-c", "me")
+        mvc.post("/api-system/deploy/deployments/dep-c/abort") { header("X-Internal-Token", "test-token"); header("X-Auth-User-Id", "u1") }
+            .andExpect { status { isAccepted() } }
+        verify(service).abort("dep-c", "me")
+
+        whenever(service.errors(eq("dep-c"), any())).thenReturn(com.example.deployservice.gateway.ErrorLogs(2, listOf(com.example.deployservice.gateway.LogLine(now, "point-service-new-1", "boom"))))
+        mvc.get("/api-system/deploy/deployments/dep-c/errors?since=2026-10-06T12:45:00Z") { header("X-Internal-Token", "test-token") }.andExpect {
+            status { isOk() }
+            jsonPath("$.count") { value(2) }
+            jsonPath("$.lines[0].pod") { value("point-service-new-1") }
+            jsonPath("$.lines[0].message") { value("boom") }
+        }
+
+        mvc.post("/api-system/deploy/services/point-service/rollout/promote") { header("X-Internal-Token", "test-token"); header("X-Auth-User-Id", "u1") }
+            .andExpect { status { isAccepted() } }
+        verify(service).promoteRollout("point-service", "me")
+        mvc.post("/api-system/deploy/services/point-service/rollout/abort") { header("X-Internal-Token", "test-token"); header("X-Auth-User-Id", "u1") }
+            .andExpect { status { isAccepted() } }
+        verify(service).abortRollout("point-service", "me")
+    }
+
+    @Test
+    fun `an unknown mode is a 400`() {
+        mvc.post("/api-system/deploy/services/point-service") {
+            header("X-Internal-Token", "test-token"); contentType = MediaType.APPLICATION_JSON
+            content = """{"tag":"develop-5708871","mode":"BLUE_GREEN"}"""
+        }.andExpect { status { isBadRequest() }; jsonPath("$.error") { value("invalid_mode") } }
     }
 }

@@ -8,6 +8,9 @@ import com.example.deployservice.gateway.GitHubGateway
 import com.example.deployservice.gateway.KubernetesGateway
 import org.slf4j.LoggerFactory
 import java.security.SecureRandom
+import com.example.deployservice.gateway.ErrorLogs
+import com.example.deployservice.gateway.LogsGateway
+import com.example.deployservice.gateway.RolloutSnapshot
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -16,7 +19,11 @@ import java.util.concurrent.ConcurrentHashMap
 
 // ---- 응답 모양(계약 문서 그대로) --------------------------------------------------------------------------------------------
 
-enum class ServiceHealth { READY, PROGRESSING, DEGRADED }
+/** PAUSED = Rollout 이 카나리 단계에서 멈춰 사람을 기다린다(배포 기록이 있을 수도, 없을 수도). */
+enum class ServiceHealth { READY, PROGRESSING, DEGRADED, PAUSED }
+
+/** 단계에서 멈춘 Rollout. [deploymentId] 가 없으면 배포 탭 밖에서 템플릿이 바뀐 것 — 서비스 행의 진행/중단으로 푼다. */
+data class RolloutPausedView(val stepIndex: Int, val weight: Int, val deploymentId: String?)
 
 data class LastDeploymentView(val id: String, val tag: String, val by: String, val byId: String?, val finishedAt: Instant?, val status: DeploymentStatus)
 
@@ -31,6 +38,11 @@ data class ServiceView(
     val updatedReplicas: Int,
     val status: ServiceHealth,
     val lastDeployment: LastDeploymentView?,
+    /** 파드 2개 이상(Rollout 기준) — 카나리 배포 버튼 활성. */
+    val canaryCapable: Boolean = false,
+    /** 카나리 단계 가중치(예: [50] 또는 [33, 66]). 파드 1개면 빈 목록. */
+    val canarySteps: List<Int> = emptyList(),
+    val rolloutPaused: RolloutPausedView? = null,
 )
 
 data class ArgoCdView(val application: String, val url: String)
@@ -73,10 +85,20 @@ data class DeploymentsResponse(val deployments: List<DeploymentRecord>)
 interface DeployService {
     fun services(): ServicesResponse
     fun tags(service: String): TagsResponse
-    fun deploy(service: String, tag: String, by: String, byId: String? = null): DeploymentStartedResponse
+    fun deploy(service: String, tag: String, by: String, byId: String? = null, mode: DeployMode = DeployMode.DIRECT): DeploymentStartedResponse
     fun rollback(service: String, by: String, byId: String? = null): DeploymentStartedResponse
+    /** 기록 한 건. 카나리 대기 중이면 Rollout·파드를 지금 읽어 canary.live 로 덧붙인다(콘솔 2초 폴링). */
     fun deployment(id: String): DeploymentRecord
     fun deployments(service: String?, limit: Int): DeploymentsResponse
+    /** 카나리 다음 단계(Signal). 기록이 RUNNING·CANARY·대기 중이 아니면 409 not_waiting. */
+    fun promote(id: String, by: String)
+    /** 카나리 중단(Signal). */
+    fun abort(id: String, by: String)
+    /** 대기 중인 카나리의 새 파드 ERROR 로그(OpenSearch). */
+    fun errors(id: String, since: Instant): ErrorLogs
+    /** 배포 기록 없이 멈춘 Rollout 을 직접 진행. 그 서비스에 RUNNING 기록이 있으면 409 use_deployment(기록 쪽 버튼을 쓰라). */
+    fun promoteRollout(service: String, by: String)
+    fun abortRollout(service: String, by: String)
 }
 
 class DefaultDeployService(
@@ -87,9 +109,11 @@ class DefaultDeployService(
     private val store: DeploymentStore,
     private val starter: DeploymentStarter,
     private val clock: Clock = Clock.systemUTC(),
+    private val logs: LogsGateway,
 ) : DeployService {
 
     private val log = LoggerFactory.getLogger(javaClass)
+    private val temporalGateway: TemporalGateway get() = starter.temporal
     private val commitMessages = ConcurrentHashMap<String, String>()
     private val random = SecureRandom()
 
@@ -104,20 +128,28 @@ class DefaultDeployService(
         val kustomization = readKustomization()
         val services = properties.services.map { spec ->
             val gitTag = Kustomization.currentTag(kustomization, spec.image) ?: UNPINNED_TAG
-            val deployment = runCatching { kubernetes.deployment(spec.name) }
-                .getOrElse { log.warn("deployment {} lookup failed: {}", spec.name, it.message); null }
-            ServiceView(
-                name = spec.name,
-                repo = spec.repo,
-                image = spec.image,
-                gitTag = gitTag,
-                runningTag = deployment?.imageTag ?: "",
-                readyReplicas = deployment?.ready ?: 0,
-                desiredReplicas = deployment?.desired ?: 0,
-                updatedReplicas = deployment?.updated ?: 0,
-                status = health(deployment),
-                lastDeployment = store.latest(spec.name)?.let { LastDeploymentView(it.id, it.tag, it.by, it.byId, it.finishedAt, it.status) },
-            )
+            val rollout = runCatching { kubernetes.rollout(spec.name) }
+                .getOrElse { log.warn("rollout {} lookup failed: {}", spec.name, it.message); null }
+            val lastDeployment = store.latest(spec.name)?.let { LastDeploymentView(it.id, it.tag, it.by, it.byId, it.finishedAt, it.status) }
+            if (rollout != null) {
+                val running = store.running(spec.name).firstOrNull()
+                ServiceView(
+                    name = spec.name, repo = spec.repo, image = spec.image, gitTag = gitTag,
+                    runningTag = rollout.imageTag, readyReplicas = rollout.ready, desiredReplicas = rollout.desired, updatedReplicas = rollout.updated,
+                    status = health(rollout), lastDeployment = lastDeployment,
+                    canaryCapable = rollout.desired >= 2, canarySteps = rollout.stepWeights,
+                    rolloutPaused = if (rollout.pausedAtStep) RolloutPausedView(rollout.currentStepIndex ?: 0, rollout.currentWeight, running?.id) else null,
+                )
+            } else {
+                // 전환 전 서비스(Rollout 없음): Deployment 기준 — 카나리 불가
+                val deployment = runCatching { kubernetes.deployment(spec.name) }
+                    .getOrElse { log.warn("deployment {} lookup failed: {}", spec.name, it.message); null }
+                ServiceView(
+                    name = spec.name, repo = spec.repo, image = spec.image, gitTag = gitTag,
+                    runningTag = deployment?.imageTag ?: "", readyReplicas = deployment?.ready ?: 0, desiredReplicas = deployment?.desired ?: 0, updatedReplicas = deployment?.updated ?: 0,
+                    status = health(deployment), lastDeployment = lastDeployment,
+                )
+            }
         }
         return ServicesResponse(
             services,
@@ -145,10 +177,14 @@ class DefaultDeployService(
         return TagsResponse(tags)
     }
 
-    override fun deploy(service: String, tag: String, by: String, byId: String?): DeploymentStartedResponse {
+    override fun deploy(service: String, tag: String, by: String, byId: String?, mode: DeployMode): DeploymentStartedResponse {
         val spec = spec(service)
         if (!Tags.isDeployable(tag)) {
             throw ApiException.badRequest("invalid_tag", "태그는 develop-<sha7> 또는 master-<sha7> 모양이어야 합니다: $tag")
+        }
+        if (mode == DeployMode.CANARY) {
+            val rollout = runCatching { kubernetes.rollout(service) }.getOrNull()
+            if (rollout == null || rollout.desired < 2) throw ApiException.badRequest("canary_not_available", "파드가 1개라 카나리 배포를 할 수 없다: $service")
         }
         // "이미 배포 중" 판단은 여기서 하지 않는다 — starter.start 가 DB 유니크 키 → 워크플로 상태 순으로 보고, 워크플로가 사라진 고아 RUNNING 기록은 닫고 진행한다.
         // 여기서 hasRunning 으로 먼저 409 를 내면 그 조정이 영원히 돌지 않는다(2026-11-15 dev 에서 확인).
@@ -158,7 +194,7 @@ class DefaultDeployService(
                 if (tag !in tags) throw ApiException.badRequest("unknown_tag", "GHCR 에 없는 태그입니다: $tag")
             }
             .onFailure { log.warn("ghcr check skipped for {}: {}", spec.image, it.message) }
-        val record = DeploymentRecord(id = newId(), service = service, tag = tag, by = by, byId = byId, startedAt = clock.instant())
+        val record = DeploymentRecord(id = newId(), service = service, tag = tag, by = by, byId = byId, startedAt = clock.instant(), mode = mode)
         return DeploymentStartedResponse.of(starter.start(record, spec.image))
     }
 
@@ -174,9 +210,65 @@ class DefaultDeployService(
         return deploy(service, previous, by, byId)
     }
 
-    override fun deployment(id: String): DeploymentRecord =
-        store.get(id)?.let { TemporalLinks.decorate(properties.temporal, it) }
-            ?: throw ApiException.notFound("deployment_not_found", "배포 기록이 없습니다: $id")
+    override fun deployment(id: String): DeploymentRecord {
+        val record = store.get(id) ?: throw ApiException.notFound("deployment_not_found", "배포 기록이 없습니다: $id")
+        return TemporalLinks.decorate(properties.temporal, withLive(record))
+    }
+
+    /** 대기 중인 카나리면 Rollout·파드를 지금 읽어 canary.live 를 채운다(저장 안 함). 읽기 실패는 live 없이 돌려준다. */
+    private fun withLive(record: DeploymentRecord): DeploymentRecord {
+        val canary = record.canary ?: return record
+        if (record.status != DeploymentStatus.RUNNING || !canary.waiting) return record
+        val rollout = runCatching { kubernetes.rollout(record.service) }.getOrNull() ?: return record
+        val pods = runCatching { kubernetes.rolloutPods(record.service) }.getOrDefault(emptyList())
+        val live = RolloutLive(
+            phase = rollout.phase, weight = rollout.currentWeight,
+            pods = pods.map { PodView(it.name, it.phase, it.ready, it.reason) },
+            ready = rollout.ready, desired = rollout.desired,
+        )
+        return record.copy(canary = canary.copy(live = live))
+    }
+
+    override fun promote(id: String, by: String) = signal(id, "promote", by)
+
+    override fun abort(id: String, by: String) = signal(id, "abort", by)
+
+    private fun signal(id: String, name: String, by: String) {
+        val record = store.get(id) ?: throw ApiException.notFound("deployment_not_found", "배포 기록이 없습니다: $id")
+        val runId = record.workflowRunId
+        if (record.status != DeploymentStatus.RUNNING || record.mode != DeployMode.CANARY || record.canary?.waiting != true || runId == null) {
+            throw ApiException.conflict("not_waiting", "이 배포는 지금 사람의 결정을 기다리는 카나리 단계가 아닙니다.")
+        }
+        try {
+            temporalGateway.signal(TemporalLinks.workflowId(record.service), runId, name, by)
+        } catch (e: ApiException) {
+            throw e
+        } catch (e: Exception) {
+            throw ApiException.unavailable("temporal_unavailable", "Temporal 에 신호를 보내지 못했습니다: ${e.message ?: e.javaClass.simpleName}")
+        }
+        log.info("deployment {} {} signalled {} by {}", id, record.service, name, by)
+    }
+
+    override fun errors(id: String, since: Instant): ErrorLogs {
+        val record = store.get(id) ?: throw ApiException.notFound("deployment_not_found", "배포 기록이 없습니다: $id")
+        val pods = record.canary?.canaryPods.orEmpty()
+        return logs.errors(pods, since)
+    }
+
+    override fun promoteRollout(service: String, by: String) = rolloutAction(service, by, "진행") { kubernetes.promote(it) }
+
+    override fun abortRollout(service: String, by: String) = rolloutAction(service, by, "중단") { kubernetes.abort(it) }
+
+    private fun rolloutAction(service: String, by: String, what: String, action: (String) -> Unit) {
+        spec(service)
+        if (store.running(service).isNotEmpty()) {
+            throw ApiException.conflict("use_deployment", "$service 는 배포 기록이 진행 중입니다 — 그 기록의 다음 단계/중단 버튼을 쓰세요.")
+        }
+        val rollout = kubernetes.rollout(service) ?: throw ApiException.notFound("rollout_not_found", "Rollout 이 없습니다: $service")
+        if (!rollout.pausedAtStep) throw ApiException.conflict("not_paused", "$service 의 Rollout 은 단계에서 멈춰 있지 않습니다.")
+        action(service)
+        log.info("rollout {} {} by {} (no deployment record)", service, what, by)
+    }
 
     override fun deployments(service: String?, limit: Int): DeploymentsResponse =
         DeploymentsResponse(
@@ -219,6 +311,13 @@ class DefaultDeployService(
                 .getOrNull()
                 ?.also { commitMessages["$repo/$sha"] = it }
         }
+    }
+
+    private fun health(r: RolloutSnapshot): ServiceHealth = when {
+        r.pausedAtStep -> ServiceHealth.PAUSED
+        r.phase == "Degraded" -> ServiceHealth.DEGRADED
+        r.rolledOut -> ServiceHealth.READY
+        else -> ServiceHealth.PROGRESSING
     }
 
     private fun health(d: DeploymentSnapshot?): ServiceHealth = when {

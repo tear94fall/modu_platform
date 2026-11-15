@@ -1,13 +1,16 @@
 package com.example.deployservice.api
 
 import com.example.deployservice.gateway.StaffLookup
+import com.example.deployservice.deploy.DeployMode
 import com.example.deployservice.deploy.DeployService
 import com.example.deployservice.deploy.DeploymentRecord
 import com.example.deployservice.deploy.DeploymentStartedResponse
 import com.example.deployservice.deploy.DeploymentsResponse
 import com.example.deployservice.deploy.ServicesResponse
 import com.example.deployservice.deploy.TagsResponse
+import com.example.deployservice.gateway.ErrorLogs
 import com.example.deployservice.logging.RequestContextFilter
+import java.time.Instant
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import org.springframework.http.HttpStatus
@@ -21,7 +24,8 @@ import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 
-data class DeployRequest(val tag: String?)
+/** [mode] 는 DIRECT(기본) | CANARY. */
+data class DeployRequest(val tag: String?, val mode: String? = null)
 
 /**
  * 모두 시스템 "배포" 탭. 게이트웨이 라우트 deploy-service-system(`/deploy-service/api-system/...`, ROLE_SYSTEM)이
@@ -54,9 +58,40 @@ class DeployController(private val service: DeployService, private val staff: St
     ): DeploymentStartedResponse {
         val tag = body?.tag?.trim()?.takeIf { it.isNotEmpty() }
             ?: throw ApiException.badRequest("invalid_tag", "배포할 태그(tag)를 보내 주세요.")
+        val mode = body?.mode?.trim()?.takeIf { it.isNotEmpty() }?.let { m ->
+            DeployMode.entries.firstOrNull { it.name.equals(m, ignoreCase = true) } ?: throw ApiException.badRequest("invalid_mode", "mode 는 DIRECT 또는 CANARY 입니다: $m")
+        } ?: DeployMode.DIRECT
         val id = by(userId)
-        return service.deploy(name, tag, displayName(id), id)
+        return service.deploy(name, tag, displayName(id), id, mode)
     }
+
+    @Operation(summary = "카나리 다음 단계(사람의 결정, 202)")
+    @PostMapping("/deployments/{id}/promote")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    fun promote(@PathVariable id: String, @RequestHeader(RequestContextFilter.USER_ID_HEADER, required = false) userId: String?) =
+        by(userId).let { service.promote(id, displayName(it)) }
+
+    @Operation(summary = "카나리 중단 — 옛 버전으로 되돌리고 git 태그 원복(202)")
+    @PostMapping("/deployments/{id}/abort")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    fun abort(@PathVariable id: String, @RequestHeader(RequestContextFilter.USER_ID_HEADER, required = false) userId: String?) =
+        by(userId).let { service.abort(id, displayName(it)) }
+
+    @Operation(summary = "대기 중인 카나리의 새 파드 ERROR 로그(OpenSearch)")
+    @GetMapping("/deployments/{id}/errors")
+    fun errors(@PathVariable id: String, @RequestParam since: Instant): ErrorLogs = service.errors(id, since)
+
+    @Operation(summary = "배포 기록 없이 단계에서 멈춘 Rollout 을 직접 진행(202)")
+    @PostMapping("/services/{name}/rollout/promote")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    fun promoteRollout(@PathVariable name: String, @RequestHeader(RequestContextFilter.USER_ID_HEADER, required = false) userId: String?) =
+        by(userId).let { service.promoteRollout(name, displayName(it)) }
+
+    @Operation(summary = "배포 기록 없이 단계에서 멈춘 Rollout 을 직접 중단(202)")
+    @PostMapping("/services/{name}/rollout/abort")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    fun abortRollout(@PathVariable name: String, @RequestHeader(RequestContextFilter.USER_ID_HEADER, required = false) userId: String?) =
+        by(userId).let { service.abortRollout(name, displayName(it)) }
 
     @Operation(summary = "마지막 성공 배포의 이전 태그로 되돌리기(비동기, 202)")
     @PostMapping("/services/{name}/rollback")

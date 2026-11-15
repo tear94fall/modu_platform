@@ -104,10 +104,69 @@ data class PodSnapshot(
     val fromNewestReplicaSet: Boolean,
 )
 
-/** 쿠버네티스 API 서버(Deployment·ReplicaSet·Pod 읽기만). */
+/**
+ * Argo Rollouts 의 Rollout 한 개(카나리 배포, 2026-11-15). 파드 템플릿은 같은 이름의 Deployment(workloadRef)에 있어 [imageTag] 는 거기서 읽는다.
+ * [stepWeights] 는 strategy.canary.steps 의 setWeight 들(단계 수 = [totalSteps]). [currentStepIndex] 는 status.currentStepIndex(0 = 첫 단계 전, steps.size = 전부 끝).
+ */
+data class RolloutSnapshot(
+    val name: String,
+    val desired: Int,
+    val replicas: Int,
+    val updated: Int,
+    val ready: Int,
+    val available: Int,
+    /** Healthy | Progressing | Paused | Degraded (비어 있을 수 있다 — 컨트롤러가 아직 안 봤을 때). */
+    val phase: String,
+    val message: String?,
+    val currentStepIndex: Int?,
+    val stepWeights: List<Int>,
+    /** strategy.canary.steps 의 전체 길이(setWeight + pause). currentStepIndex ≥ stepCount 면 단계를 전부 지났다. */
+    val stepCount: Int,
+    /** 사람이 풀어야 하는 일시정지(status.pauseConditions 가 비어 있지 않음). */
+    val paused: Boolean,
+    val aborted: Boolean,
+    val currentPodHash: String,
+    val stableRS: String,
+    val imageTag: String,
+) {
+    val totalSteps: Int get() = stepWeights.size
+
+    /** 지금 단계까지 적용된 가중치. 단계가 없거나 전부 지났으면 100, 첫 단계 전이면 0. */
+    val currentWeight: Int
+        get() {
+            if (stepWeights.isEmpty()) return 100
+            val idx = currentStepIndex ?: return 0
+            if (idx >= stepCount) return 100
+            // steps = [setWeight, pause, setWeight, pause, …]: index i 에 멈춰 있으면 지난 setWeight 개수 = ceil(i/2)
+            val passed = (idx + 1) / 2
+            return if (passed <= 0) 0 else stepWeights[minOf(passed, stepWeights.size) - 1]
+        }
+
+    val rolledOut: Boolean
+        get() = phase == "Healthy" && updated == desired && ready == desired && available == desired && stableRS == currentPodHash && desired > 0
+
+    val pausedAtStep: Boolean get() = paused && currentStepIndex != null
+}
+
+/** 쿠버네티스 API 서버. Deployment·ReplicaSet·Pod 는 읽기만, Rollout 은 읽기 + status 패치(진행/중단). */
 interface KubernetesGateway {
     fun deployment(name: String): DeploymentSnapshot?
 
     /** [deploymentName] 셀렉터에 잡히는 파드들. */
     fun pods(deploymentName: String): List<PodSnapshot>
+
+    /** 같은 이름의 Rollout. 없으면 null(전환 전 서비스). */
+    fun rollout(name: String): RolloutSnapshot?
+
+    /** Rollout 의 파드들 — [PodSnapshot.fromNewestReplicaSet] 는 `rollouts-pod-template-hash == status.currentPodHash`. */
+    fun rolloutPods(name: String): List<PodSnapshot>
+
+    /** 일시정지 해제(다음 단계) — status 머지 패치 `{"pauseConditions": null}`. */
+    fun promote(name: String)
+
+    /** 남은 단계 전부 건너뛰고 끝까지 — `{"promoteFull": true}`. */
+    fun promoteFull(name: String)
+
+    /** 중단 — `{"abort": true}`. stable ReplicaSet 으로 돌아간다. */
+    fun abort(name: String)
 }

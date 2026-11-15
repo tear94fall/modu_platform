@@ -25,6 +25,8 @@ class WorkflowClientTemporalGatewayTest {
     /** 테스트용 워크플로 구현: 한 시간 잠들어 "실행 중" 상태를 유지한다(시간 건너뛰기는 꺼 둔다). */
     class SleepingDeployWorkflow : DeployWorkflow {
         override fun run(input: DeployInput) = Workflow.sleep(Duration.ofHours(1))
+        override fun promote(by: String) = Unit
+        override fun abort(by: String) = Unit
     }
 
     private lateinit var env: TestWorkflowEnvironment
@@ -55,21 +57,21 @@ class WorkflowClientTemporalGatewayTest {
 
     @Test
     fun `start returns the run id and the execution is RUNNING, a second start is rejected`() {
-        val runId = gateway.start("deploy-point-service", input)
+        val runId = gateway.start("deploy-point-service", input, Duration.ofMinutes(30))
 
         assertTrue(runId.isNotBlank())
         assertEquals(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING, gateway.status("deploy-point-service", null))
         assertEquals(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING, gateway.status("deploy-point-service", runId))
-        assertThrows<WorkflowExecutionAlreadyStarted> { gateway.start("deploy-point-service", input) }
+        assertThrows<WorkflowExecutionAlreadyStarted> { gateway.start("deploy-point-service", input, Duration.ofMinutes(30)) }
     }
 
     @Test
     fun `a terminated execution reports TERMINATED and its id can be started again`() {
-        val runId = gateway.start("deploy-point-service", input)
+        val runId = gateway.start("deploy-point-service", input, Duration.ofMinutes(30))
         env.workflowClient.newUntypedWorkflowStub("deploy-point-service").terminate("test")
 
         assertEquals(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TERMINATED, gateway.status("deploy-point-service", runId))
-        val second = gateway.start("deploy-point-service", input)
+        val second = gateway.start("deploy-point-service", input, Duration.ofMinutes(30))
         assertTrue(second != runId)
     }
 }
